@@ -1,0 +1,366 @@
+
+function getMapData() {
+  const ss = SpreadsheetApp.openById(MY_MAP_SPREADSHEET_ID); // Updated!
+  const sheet = ss.getSheetByName(MY_MAP_SHEET_NAME);        // Updated!
+  
+  if (!sheet) {
+// ... rest of the code stays exactly the same
+  
+  if (!sheet) {
+    throw new Error("MapData sheet not found. Please run the sync script.");
+  }
+
+  const data = sheet.getDataRange().getDisplayValues();
+  if (data.length <= 1) {
+    throw new Error("No data found in the Sheet. Please run the sync script.");
+  }
+
+  const headers = data[0];
+  const lowerHeaders = headers.map(h => String(h).toLowerCase().trim());
+  
+  let latIdx = lowerHeaders.findIndex(h => h === 'site latitude' || h.includes('latitude') || h === 'lat');
+  let lngIdx = lowerHeaders.findIndex(h => h === 'site longitude' || h.includes('longitude') || h === 'lng' || h === 'lon');
+  let nameIdx = lowerHeaders.findIndex(h => h === 'site name' || h === 'name');
+
+  if (latIdx === -1 || lngIdx === -1) {
+    throw new Error("Could not find 'Site Latitude' or 'Site Longitude' columns in Sheet.");
+  }
+
+return JSON.stringify({
+    headers: headers,
+    rows: data.slice(1),
+    latIdx: latIdx,
+    lngIdx: lngIdx,
+    nameIdx: nameIdx
+  });
+} // <--- THIS BRACKET IS CRUCIAL! It closes getMapData()
+
+/**
+ * 3. WEB APP VIEW: Deploy this as a Web App
+ */
+function doGet() {
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <base target="_top">
+      <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+      <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+      
+      <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.css" />
+      <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.Default.css" />
+      <script src="https://unpkg.com/leaflet.markercluster@1.4.1/dist/leaflet.markercluster.js"></script>
+      
+      <style>
+        html, body { height: 100%; margin: 0; padding: 0; background-color: #f4f4f4; font-family: sans-serif; }
+        #map { height: 100vh; width: 100vw; }
+        
+        /* --- Search UI Styles --- */
+        #search-container {
+          position: absolute;
+          top: 10px;
+          right: 10px;
+          z-index: 1000;
+          background: white;
+          padding: 5px;
+          border-radius: 5px;
+          box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+          display: flex;
+          flex-direction: column;
+          width: 300px;
+          max-width: 90vw;
+        }
+        #search-box { display: flex; width: 100%; }
+        #search-input {
+          flex-grow: 1;
+          padding: 10px;
+          border: 1px solid #ccc;
+          border-radius: 3px 0 0 3px;
+          outline: none;
+          font-size: 14px;
+        }
+        #search-btn {
+          padding: 10px 15px;
+          background: #2196F3;
+          color: white;
+          border: none;
+          border-radius: 0 3px 3px 0;
+          cursor: pointer;
+          font-weight: bold;
+        }
+        #search-btn:hover { background: #0b7dda; }
+        #search-results {
+          max-height: 250px;
+          overflow-y: auto;
+          background: white;
+          width: 100%;
+          display: none;
+          margin-top: 5px;
+          border-top: 1px solid #eee;
+        }
+        .search-result-item {
+          padding: 10px;
+          border-bottom: 1px solid #eee;
+          cursor: pointer;
+          font-size: 13px;
+        }
+        .search-result-item:hover { background: #f0f0f0; }
+        .search-result-sub { font-size: 11px; color: #666; margin-top: 2px; }
+
+        /* --- System UI Styles --- */
+        #loading-overlay {
+          position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+          background: rgba(255, 255, 255, 0.9);
+          z-index: 9999;
+          display: flex; flex-direction: column; align-items: center; justify-content: center;
+        }
+        .progress-container {
+          width: 300px; background-color: #e0e0e0; border-radius: 8px; overflow: hidden;
+          margin-top: 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+        .progress-bar { height: 20px; width: 0%; background-color: #2196F3; transition: width 0.2s; }
+        #progress-text { font-weight: bold; color: #333; }
+        
+        #error-msg {
+          display: none; background: #ffe6e6; color: #cc0000; padding: 20px;
+          position: absolute; top: 10px; left: 10px; right: 10px; z-index: 10000;
+          border: 2px solid #cc0000; border-radius: 5px; box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        }
+        .popup-content { font-size: 13px; max-height: 250px; overflow-y: auto; }
+      </style>
+    </head>
+    <body>
+      <div id="error-msg"></div>
+      
+      <div id="loading-overlay">
+        <div id="progress-text">Loading Map Engine...</div>
+        <div class="progress-container"><div id="progress-bar-fill" class="progress-bar"></div></div>
+      </div>
+
+      <!-- Search Interface -->
+      <div id="search-container" style="display: none;">
+        <div id="search-box">
+          <input type="text" id="search-input" placeholder="Search site, address, lat/lng..." />
+          <button id="search-btn" onclick="executeSearch()">Search</button>
+        </div>
+        <div id="search-results"></div>
+      </div>
+
+      <div id="map"></div>
+      
+      <script>
+        // Initialize Map
+        const map = L.map('map').setView([39.82, -98.57], 4);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
+        
+        const markers = L.markerClusterGroup({ chunkedLoading: true });
+        
+        // Global variables for search
+        window.siteDataMap = []; 
+        let tempSearchMarker = null;
+
+        const progressText = document.getElementById('progress-text');
+        const progressBarFill = document.getElementById('progress-bar-fill');
+        const loadingOverlay = document.getElementById('loading-overlay');
+        const searchContainer = document.getElementById('search-container');
+        const searchInput = document.getElementById('search-input');
+        const searchResults = document.getElementById('search-results');
+
+        function showError(msg) {
+          loadingOverlay.style.display = 'none';
+          document.getElementById('error-msg').style.display = 'block';
+          document.getElementById('error-msg').innerHTML = "<strong>Error:</strong> " + msg;
+        }
+
+        // Fetch Data
+        progressText.innerText = 'Downloading data from Google Sheets...';
+        progressBarFill.style.width = '10%';
+        
+        google.script.run
+          .withSuccessHandler(function(responseString) {
+            try {
+              progressBarFill.style.width = '30%';
+              progressText.innerText = 'Parsing data...';
+              
+              const data = JSON.parse(responseString);
+              const { headers, rows, latIdx, lngIdx, nameIdx } = data;
+              
+              let currentIndex = 0;
+              const chunkSize = 1000; 
+              let markerArray = [];
+              let pointsAdded = 0;
+
+              function processChunk() {
+                const end = Math.min(currentIndex + chunkSize, rows.length);
+                
+                for (let i = currentIndex; i < end; i++) {
+                  const row = rows[i];
+                  const lat = parseFloat(row[latIdx]);
+                  const lng = parseFloat(row[lngIdx]);
+                  
+                  if(!isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0) {
+                    let popupHtml = '<div class="popup-content"><b>' + (row[nameIdx] || 'Unknown Site') + '</b><hr><ul>';
+                    let searchString = ""; // String for universal searching
+
+                    headers.forEach((h, j) => {
+                      if(row[j] && row[j].trim() !== '') {
+                        let safeVal = String(row[j]).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                        popupHtml += '<li><b>' + h + ':</b> ' + safeVal + '</li>';
+                        searchString += safeVal + " "; // Add to search index
+                      }
+                    });
+                    popupHtml += '</ul></div>';
+                    
+                    const marker = L.marker([lat, lng]).bindPopup(popupHtml);
+                    markerArray.push(marker);
+                    
+                    // Save to our searchable array. 
+                    // We replace underscores with spaces here so it matches user queries seamlessly.
+                    window.siteDataMap.push({
+                      marker: marker,
+                      name: row[nameIdx] || 'Unknown Site',
+                      searchText: searchString.toLowerCase().replace(/_/g, ' '),
+                      details: row.join(' | ') // For subtext in search results
+                    });
+
+                    pointsAdded++;
+                  }
+                }
+
+                currentIndex = end;
+                const percentage = 30 + Math.round((currentIndex / rows.length) * 60); 
+                progressBarFill.style.width = percentage + '%';
+                progressText.innerText = 'Plotting points... ' + currentIndex + ' / ' + rows.length;
+
+                if (currentIndex < rows.length) {
+                  setTimeout(processChunk, 5); 
+                } else {
+                  if (pointsAdded === 0) throw new Error("No valid Latitude/Longitude pairs found.");
+                  
+                  progressBarFill.style.width = '100%';
+                  progressText.innerText = 'Rendering map clusters...';
+                  
+                  setTimeout(() => {
+                    markers.addLayers(markerArray); 
+                    map.addLayer(markers);
+                    loadingOverlay.style.display = 'none'; 
+                    searchContainer.style.display = 'flex'; // Reveal search box
+                  }, 100);
+                }
+              }
+
+              setTimeout(processChunk, 50);
+
+            } catch(e) { showError(e.message); }
+          })
+          .withFailureHandler(function(error) { showError("Failed to fetch data: " + error.message); })
+          .getMapData(); 
+
+        // --- SEARCH LOGIC ---
+
+        // Trigger search on Enter key
+        searchInput.addEventListener('keypress', function(e) {
+          if (e.key === 'Enter') executeSearch();
+        });
+
+        function executeSearch() {
+          // Replace underscores with spaces in the query too, so it matches the normalized index!
+          const query = searchInput.value.trim().toLowerCase().replace(/_/g, ' ');
+          searchResults.innerHTML = '';
+          searchResults.style.display = 'none';
+          
+          if (tempSearchMarker) {
+            map.removeLayer(tempSearchMarker); // Clear previous temp pins
+            tempSearchMarker = null;
+          }
+
+          if (!query) return;
+
+          const btn = document.getElementById('search-btn');
+          btn.innerText = '...';
+
+          // 1. Check if it is a Lat/Lng coordinate pair
+          const coordMatch = query.match(/^(-?\\d+(\\.\\d+)?)[,\\s]+(-?\\d+(\\.\\d+)?)$/);
+          if (coordMatch) {
+            const lat = parseFloat(coordMatch[1]);
+            const lng = parseFloat(coordMatch[3]);
+            zoomToExternal(lat, lng, "Searched Coordinates");
+            btn.innerText = 'Search';
+            return;
+          }
+
+          // 2. Check local data for matches in ANY column
+          const matches = window.siteDataMap.filter(item => item.searchText.includes(query));
+          
+          if (matches.length === 1) {
+            // Exactly one match, fly directly to it and open popup
+            zoomToPin(matches[0]);
+            btn.innerText = 'Search';
+          } 
+          else if (matches.length > 1) {
+            // Multiple matches, show dropdown (limit to 20 to prevent lag)
+            searchResults.style.display = 'block';
+            matches.slice(0, 20).forEach(match => {
+              const div = document.createElement('div');
+              div.className = 'search-result-item';
+              // Replaced nested template literals to fix Google Apps Script parser error
+              div.innerHTML = '<strong>' + match.name + '</strong><div class="search-result-sub">' + match.details.substring(0, 60) + '...</div>';
+              div.onclick = () => {
+                zoomToPin(match);
+                searchResults.style.display = 'none';
+              };
+              searchResults.appendChild(div);
+            });
+            btn.innerText = 'Search';
+          } 
+          else {
+            // 3. No local matches, fallback to Address Geocoding
+            fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(query))
+              .then(res => res.json())
+              .then(data => {
+                if (data && data.length > 0) {
+                  const lat = parseFloat(data[0].lat);
+                  const lng = parseFloat(data[0].lon);
+                  zoomToExternal(lat, lng, data[0].display_name);
+                } else {
+                  alert("No results found in data or addresses.");
+                }
+              })
+              .catch(err => {
+                console.error(err);
+                alert("Error searching address.");
+              })
+              .finally(() => { btn.innerText = 'Search'; });
+          }
+        }
+
+        function zoomToPin(pinItem) {
+          // Leaflet marker cluster requires this special function to open popups hidden inside clusters
+          markers.zoomToShowLayer(pinItem.marker, function() {
+            pinItem.marker.openPopup();
+          });
+        }
+
+        function zoomToExternal(lat, lng, title) {
+          map.flyTo([lat, lng], 15);
+          tempSearchMarker = L.marker([lat, lng], {
+            icon: L.icon({
+              iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
+              shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+              iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34], shadowSize: [41, 41]
+            })
+          }).addTo(map);
+          tempSearchMarker.bindPopup("<b>" + title + "</b><br>Lat: " + lat + "<br>Lng: " + lng).openPopup();
+        }
+      </script>
+    </body>
+    </html>
+  `; 
+
+  return HtmlService.createHtmlOutput(html)
+    .setTitle('Live Map Viewer')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+}
