@@ -27,7 +27,8 @@ function generateHandoffDrafts() {
   }
   
   // Daily Data Dump Column Mapping
-  var colNodeName = getCol(headers, "Site Name"); 
+  var colNodeName = getCol(headers, "Site Name");
+  var colMDG = getCol(headers, "MDG Location ID");
   var colFuzeId = getCol(headers, "Fuze Project ID");
   var colHubSite = getCol(headers, "Proj Final Hub Site Name");
   var colProjType = getCol(headers, "Project Type");
@@ -166,6 +167,7 @@ function generateHandoffDrafts() {
         return tr + "</tr>";
       }
       
+      htmlBody += buildRow("MDG Location ID", r => getCell(r, colMDG));
       htmlBody += "<tr><td style='background-color: #4f81bd; color: #ffffff; font-weight: bold; border: 1px solid black;'>Hub Site</td><td colspan='"+processedGroup.length+"' style='background-color:cyan; text-align:center; border: 1px solid black;'>"+getCell(processedGroup[0].data, colHubSite)+"</td></tr>";
       htmlBody += buildRow("Fuze ID", r => getCell(r, colFuzeId));
       htmlBody += buildRow("Tech", r => techMap[String(getCell(r, colFuzeId)).trim()] || "Data Missing");
