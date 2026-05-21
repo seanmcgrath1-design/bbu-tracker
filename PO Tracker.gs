@@ -38,6 +38,7 @@ function checkForEnisHandoffs() {
     var subject = msg.getSubject();
     if (existingSubjects[subject]) return;
     if (subject.indexOf("Small Cell Mod Ready for Network Assurance:") !== -1) return;
+    if (subject.indexOf("48 Hour Review Document") !== -1) return;
 
     var body = msg.getPlainBody();
 
@@ -307,6 +308,7 @@ function buildNewTrackingRows(unmatchedPOs) {
     if (origThreads.length > 0) {
       emailSubject = origThreads[0].getFirstMessageSubject();
       if (emailSubject.indexOf("Small Cell Mod Ready for Network Assurance:") !== -1) return;
+      if (emailSubject.indexOf("48 Hour Review Document") !== -1) return;
       var bodyText = origThreads[0].getMessages()[0].getPlainBody();
       var workForMatch = bodyText.match(/Work for\s+([^\.\n\r<]+)/i);
       if (workForMatch) emailBodySites = workForMatch[1].replace(/\*/g, '').trim();
