@@ -134,7 +134,7 @@ function checkPOConfirmationsAndDraft() {
 
   // 1. Process all PO confirmation emails
   var unmatchedPOs = [];
-  var threads = GmailApp.search('subject:"PURCHASE ORDER PENDING" newer_than:90d');
+  var threads = GmailApp.search('subject:("PURCHASE ORDER PENDING" OR "PURCHASE ORDER APPROVAL") newer_than:90d');
 
   threads.forEach(function(thread) {
     thread.getMessages().forEach(function(msg) {
@@ -259,7 +259,7 @@ function backfillPoTracking() {
   }
 
   var unmatchedPOs = [];
-  var threads = GmailApp.search('subject:"PURCHASE ORDER PENDING" newer_than:90d');
+  var threads = GmailApp.search('subject:("PURCHASE ORDER PENDING" OR "PURCHASE ORDER APPROVAL") newer_than:90d');
 
   threads.forEach(function(thread) {
     thread.getMessages().forEach(function(msg) {
@@ -505,9 +505,84 @@ function ensureTrackingSheet(ss) {
   return sheet;
 }
 
+function debugSpecificPO() {
+  var targetPO = "3002678169";
+  var results = [];
+
+  // Step 1: Find the PURCHASE ORDER PENDING email
+  var threads = GmailApp.search('subject:("PURCHASE ORDER PENDING" OR "PURCHASE ORDER APPROVAL") newer_than:90d');
+  results.push("PURCHASE ORDER PENDING threads found: " + threads.length);
+
+  var foundMsg = null;
+  threads.forEach(function(thread) {
+    thread.getMessages().forEach(function(msg) {
+      if (msg.getPlainBody().indexOf(targetPO) !== -1) {
+        foundMsg = msg;
+      }
+    });
+  });
+
+  if (!foundMsg) {
+    results.push("❌ PO " + targetPO + " not found in any PURCHASE ORDER PENDING email.");
+    results.push("Searching broadly for PO number in all mail...");
+    var broadThreads = GmailApp.search('"' + targetPO + '" newer_than:90d');
+    results.push("Broad search results: " + broadThreads.length + " thread(s)");
+    broadThreads.forEach(function(thread) {
+      thread.getMessages().forEach(function(msg) {
+        results.push("  Subject: " + msg.getSubject() + " | From: " + msg.getFrom());
+      });
+    });
+  } else {
+    results.push("✅ Found PO " + targetPO + " in email: " + foundMsg.getSubject());
+    var body = foundMsg.getPlainBody();
+    var po = parsePOConfirmationEmail(body);
+    if (!po) {
+      results.push("❌ parsePOConfirmationEmail returned NULL for this email.");
+      results.push("   Check: RTN/EO starts with S? Amount >= $950?");
+      results.push("   Body snippet:\n" + body.substring(0, 600));
+    } else {
+      results.push("✅ Parsed OK: PO=" + po.poNumber + " RTN=" + po.rtnEO + " Ref=" + po.poRef + " Amount=" + po.totalAmount + " Type=" + po.poType);
+
+      // Step 2: Try to find the original Ready for email
+      var origThreads = GmailApp.search('subject:"Ready for" "' + po.poRef + '"');
+      results.push('Ready for search ("' + po.poRef + '"): ' + origThreads.length + " results");
+
+      if (origThreads.length === 0 && po.poRef.indexOf('&') !== -1) {
+        var firstPart = po.poRef.split('&')[0].trim();
+        origThreads = GmailApp.search('subject:"Ready for" "' + firstPart + '"');
+        results.push('Fallback search ("' + firstPart + '"): ' + origThreads.length + " results");
+      }
+      if (origThreads.length === 0) {
+        origThreads = GmailApp.search('subject:"Ready for" "' + po.rtnEO + '"');
+        results.push('RTN fallback search ("' + po.rtnEO + '"): ' + origThreads.length + " results");
+      }
+
+      if (origThreads.length > 0) {
+        var emailSubject = origThreads[0].getFirstMessageSubject();
+        results.push("✅ Original email subject: " + emailSubject);
+        if (emailSubject.indexOf("Small Cell Mod Ready for Network Assurance:") !== -1) {
+          results.push("❌ BLOCKED by Small Cell Mod exclusion filter.");
+        } else if (emailSubject.indexOf("48 Hour Review Document") !== -1) {
+          results.push("❌ BLOCKED by 48 Hour Review Document exclusion filter.");
+        } else {
+          results.push("✅ Subject passes exclusion filters — should proceed to draft.");
+        }
+      } else {
+        results.push("❌ Could not find original Ready for email.");
+      }
+    }
+  }
+
+  var output = results.join("\n");
+  console.log(output);
+  try {
+    SpreadsheetApp.getUi().alert("Debug: PO " + targetPO, output, SpreadsheetApp.getUi().ButtonSet.OK);
+  } catch(e) {}
+}
+
 function debugPOEmailSearch() {
   var results = [];
-  var threads = GmailApp.search('subject:"PURCHASE ORDER PENDING" newer_than:90d');
+  var threads = GmailApp.search('subject:("PURCHASE ORDER PENDING" OR "PURCHASE ORDER APPROVAL") newer_than:90d');
   results.push('Found ' + threads.length + ' threads.\n');
 
   if (threads.length > 0) {
