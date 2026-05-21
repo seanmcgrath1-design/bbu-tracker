@@ -126,10 +126,14 @@ function checkPOConfirmationsAndDraft() {
   var COL_RTN = 4, COL_SUBJECT = 5, COL_PO = 6, COL_AMOUNT = 7;
   var COL_TYPE = 8, COL_STATUS = 9;
 
-  // Build index of all known RTN/EOs → row index
+  // Build index of all known RTN/EOs and PO numbers → row index
   var knownRtns = {};
+  var knownPOs = {};
   for (var i = 1; i < trackingData.length; i++) {
-    knownRtns[String(trackingData[i][COL_RTN]).trim()] = i;
+    var rtnVal = String(trackingData[i][COL_RTN]).trim();
+    var poVal  = String(trackingData[i][COL_PO]).trim();
+    if (rtnVal) knownRtns[rtnVal] = i;
+    if (poVal)  knownPOs[poVal]   = i;
   }
 
   // 1. Process all PO confirmation emails
@@ -142,9 +146,12 @@ function checkPOConfirmationsAndDraft() {
       var po = parsePOConfirmationEmail(body);
       if (!po) return;
 
-      if (knownRtns.hasOwnProperty(po.rtnEO)) {
-        // RTN/EO is tracked — update if still Pending
-        var rowIdx = knownRtns[po.rtnEO];
+      var isTrackedByRtn = knownRtns.hasOwnProperty(po.rtnEO);
+      var isTrackedByPO  = knownPOs.hasOwnProperty(po.poNumber);
+
+      if (isTrackedByRtn || isTrackedByPO) {
+        // Already tracked — update row if still Pending
+        var rowIdx = isTrackedByRtn ? knownRtns[po.rtnEO] : knownPOs[po.poNumber];
         if (String(trackingData[rowIdx][COL_STATUS]).trim() === "Pending") {
           trackingSheet.getRange(rowIdx + 1, COL_PO + 1).setValue(po.poNumber);
           trackingSheet.getRange(rowIdx + 1, COL_AMOUNT + 1).setValue(po.totalAmount);
@@ -157,7 +164,7 @@ function checkPOConfirmationsAndDraft() {
           trackingData[rowIdx][COL_STATUS] = "Confirmed";
         }
       } else {
-        // RTN/EO not tracked — collect for auto-registration (handles Enis emails)
+        // Neither RTN/EO nor PO number tracked — collect for auto-registration
         unmatchedPOs.push({ po: po, emailDate: msg.getDate() });
       }
     });
