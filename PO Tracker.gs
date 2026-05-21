@@ -84,6 +84,13 @@ function checkForEnisHandoffs() {
 
 // Scans PO Triggers for "Awaiting PO Request" rows and marks them "Handoff Sent"
 // if a matching email is found in Sean's sent mail.
+// Run this once to reset the Enis check date and re-scan the last 90 days.
+// Use when an email was missed due to the date filter advancing past it.
+function resetAndRescanEnisHandoffs() {
+  PropertiesService.getScriptProperties().deleteProperty('lastEnisCheckDate');
+  checkForEnisHandoffs();
+}
+
 function checkSentHandoffs(ss) {
   if (!ss) ss = SpreadsheetApp.getActiveSpreadsheet();
   var triggersSheet = ss.getSheetByName("PO Triggers");
