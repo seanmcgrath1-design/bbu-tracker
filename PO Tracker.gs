@@ -407,6 +407,27 @@ function createPOReplyDraft(subject, group, COL_ALL_SITES, COL_SITE, COL_PO, COL
     return false;
   }
 
+  // Build MDG Location ID lookup from Daily Data Dump (site name → MDG ID)
+  var mdgMap = {};
+  var dumpSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Daily Data Dump");
+  if (dumpSheet) {
+    var dumpData = dumpSheet.getDataRange().getValues();
+    var dumpHeaders = dumpData[1];
+    var colDumpSite = -1, colDumpMDG = -1;
+    for (var h = 0; h < dumpHeaders.length; h++) {
+      var hName = String(dumpHeaders[h]).trim().toLowerCase();
+      if (hName === "site name") colDumpSite = h;
+      if (hName === "mdg location id") colDumpMDG = h;
+    }
+    if (colDumpSite !== -1 && colDumpMDG !== -1) {
+      for (var d = 2; d < dumpData.length; d++) {
+        var siteName = String(dumpData[d][colDumpSite]).trim();
+        var mdgId = String(dumpData[d][colDumpMDG]).trim();
+        if (siteName && mdgId && mdgId !== "") mdgMap[siteName] = mdgId;
+      }
+    }
+  }
+
   var thread = threads[0];
   var allActiveSites = String(group[0].data[COL_ALL_SITES]);
 
@@ -420,33 +441,44 @@ function createPOReplyDraft(subject, group, COL_ALL_SITES, COL_SITE, COL_PO, COL
     }
   });
 
+  var thStyle = "background-color: #4f81bd; color: #ffffff; border: 1px solid black; padding: 8px; text-align: left;";
+  var tdStyle = "border: 1px solid black; padding: 8px;";
+
   var htmlBody = "<div style='font-family: Arial, sans-serif; font-size: 14px;'>";
   htmlBody += "<p>Team,</p>";
   htmlBody += "<p>The Purchase Order(s) have been issued for <strong>" + allActiveSites + "</strong>. Please see details below:</p>";
   htmlBody += "<table cellpadding='6' cellspacing='0' style='border-collapse: collapse; font-size: 14px; border: 1px solid black;'>";
   htmlBody += "<tr>";
-  htmlBody += "<th style='background-color: #4f81bd; color: #ffffff; border: 1px solid black; padding: 8px; text-align: left;'>Description</th>";
-  htmlBody += "<th style='background-color: #4f81bd; color: #ffffff; border: 1px solid black; padding: 8px; text-align: left;'>Site(s)</th>";
-  htmlBody += "<th style='background-color: #4f81bd; color: #ffffff; border: 1px solid black; padding: 8px; text-align: left;'>PO #</th>";
+  htmlBody += "<th style='" + thStyle + "'>Description</th>";
+  htmlBody += "<th style='" + thStyle + "'>Site(s)</th>";
+  htmlBody += "<th style='" + thStyle + "'>PO #</th>";
+  htmlBody += "<th style='" + thStyle + "'>MDG Location ID</th>";
   htmlBody += "</tr>";
 
   // One Install/Integration row per primary PO, each showing only its own site
   primaryRows.forEach(function(pr) {
-    htmlBody += "<tr><td style='border: 1px solid black; padding: 8px;'>Install / Integration</td>";
-    htmlBody += "<td style='border: 1px solid black; padding: 8px;'>" + String(pr.data[COL_SITE]) + "</td>";
-    htmlBody += "<td style='border: 1px solid black; padding: 8px;'>" + String(pr.data[COL_PO]) + "</td></tr>";
+    var siteName = String(pr.data[COL_SITE]);
+    var mdg = mdgMap[siteName] || "";
+    htmlBody += "<tr><td style='" + tdStyle + "'>Install / Integration</td>";
+    htmlBody += "<td style='" + tdStyle + "'>" + siteName + "</td>";
+    htmlBody += "<td style='" + tdStyle + "'>" + String(pr.data[COL_PO]) + "</td>";
+    htmlBody += "<td style='" + tdStyle + "'>" + mdg + "</td></tr>";
 
     // DWDM is bundled with this PO (type = "Install/Integration + DWDM")
-    htmlBody += "<tr><td style='border: 1px solid black; padding: 8px;'>DWDM Install</td>";
-    htmlBody += "<td style='border: 1px solid black; padding: 8px;'>" + String(pr.data[COL_SITE]) + "</td>";
-    htmlBody += "<td style='border: 1px solid black; padding: 8px;'>" + String(pr.data[COL_PO]) + "</td></tr>";
+    htmlBody += "<tr><td style='" + tdStyle + "'>DWDM Install</td>";
+    htmlBody += "<td style='" + tdStyle + "'>" + siteName + "</td>";
+    htmlBody += "<td style='" + tdStyle + "'>" + String(pr.data[COL_PO]) + "</td>";
+    htmlBody += "<td style='" + tdStyle + "'>" + mdg + "</td></tr>";
   });
 
   // Standalone DWDM-only rows
   dwdmRows.forEach(function(r) {
-    htmlBody += "<tr><td style='border: 1px solid black; padding: 8px;'>DWDM Install</td>";
-    htmlBody += "<td style='border: 1px solid black; padding: 8px;'>" + String(r.data[COL_SITE]) + "</td>";
-    htmlBody += "<td style='border: 1px solid black; padding: 8px;'>" + String(r.data[COL_PO]) + "</td></tr>";
+    var siteName = String(r.data[COL_SITE]);
+    var mdg = mdgMap[siteName] || "";
+    htmlBody += "<tr><td style='" + tdStyle + "'>DWDM Install</td>";
+    htmlBody += "<td style='" + tdStyle + "'>" + siteName + "</td>";
+    htmlBody += "<td style='" + tdStyle + "'>" + String(r.data[COL_PO]) + "</td>";
+    htmlBody += "<td style='" + tdStyle + "'>" + mdg + "</td></tr>";
   });
 
   htmlBody += "</table></div>";
