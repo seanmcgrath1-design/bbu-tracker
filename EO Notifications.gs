@@ -24,7 +24,7 @@ function checkEONotifications() {
   var props = PropertiesService.getScriptProperties();
   var lastCheck = props.getProperty('lastEOCheckDate');
   var searchQuery = 'from:donotreply@verizon.com subject:"EO NOTIFICATION" ' +
-    (lastCheck ? 'after:' + lastCheck : 'newer_than:90d');
+    (lastCheck ? 'after:' + lastCheck : 'newer_than:180d');
 
   var threads = GmailApp.search(searchQuery);
   var rowsAdded = 0;
@@ -33,9 +33,10 @@ function checkEONotifications() {
     thread.getMessages().forEach(function(msg) {
       var subject = msg.getSubject();
 
-      // Only process UNeFI Request Submitted emails (not Approved, P2P, etc.)
-      if (subject.indexOf('UNeFI Request Submitted') === -1 &&
-          subject.indexOf('UNeFi Request Submitted') === -1) return;
+      // Only process UNeFI notification emails (Submitted or Approved); skip P2P, etc.
+      var isUnefi = subject.indexOf('UNeFI Request') !== -1 ||
+                    subject.indexOf('UNeFi Request') !== -1;
+      if (!isUnefi) return;
 
       var eoMatch = subject.match(/E\d{9}/);
       if (!eoMatch) return;
@@ -141,10 +142,11 @@ function parseEONotificationEmail(body, eoNumber) {
 
   // Plain body separates table cells with spaces/newlines (not tabs).
   // Anchor on Capital WBS (VZ-XXXXXXXX.X.XXXX) which uniquely precedes Install Location fields.
-  var locMatch = body.match(/VZ-[\d]+\.[A-Z]+\.[\d]+\s+(5\d{9})\s+([^\n]+?)\s+[\d,]{4,}\.\d{2}/);
+  // Install Location Desc may be empty; Requested Amount may be as low as 0.00.
+  var locMatch = body.match(/VZ-[\d]+\.[A-Z]+\.[\d]+\s+(5\d{9})\s*(([^\n\d][^\n]*?)\s+)?[\d,]+\.\d{2}/);
   if (locMatch) {
     installLocation     = locMatch[1].trim();
-    installLocationDesc = locMatch[2].trim();
+    installLocationDesc = locMatch[3] ? locMatch[3].trim() : "";
   }
 
   // MPN: alphanumeric part number format (e.g. RDH102409/1-PLV or RDH102409/1)
