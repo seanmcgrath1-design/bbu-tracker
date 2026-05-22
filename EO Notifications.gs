@@ -245,6 +245,51 @@ function backfillEONotificationsChunked() {
   } catch(e) {}
 }
 
+// Debug: shows all P2P transfers found and whether their donating EOs are tracked
+function debugP2PSearch() {
+  var ss = getEOSpreadsheet();
+  var eoSheet = ss.getSheetByName("EO's");
+  var results = [];
+
+  var eoRowMap = {};
+  if (eoSheet) {
+    var eoData = eoSheet.getDataRange().getValues();
+    for (var i = 1; i < eoData.length; i++) {
+      var eoNum = String(eoData[i][1]).trim();
+      if (eoNum) eoRowMap[eoNum] = i;
+    }
+    results.push("EO's tab has " + (eoData.length - 1) + " rows.\n");
+  } else {
+    results.push("EO's tab not found.\n");
+  }
+
+  var threads = GmailApp.search('from:donotreply@verizon.com subject:"Project to Project Transfer" newer_than:90d');
+  results.push("P2P emails found: " + threads.length + "\n");
+
+  threads.forEach(function(thread) {
+    thread.getMessages().forEach(function(msg) {
+      var body = msg.getPlainBody();
+      var dataMatch = body.match(/\b\d{7,8}\s+(E\d{9})\s+\d{10,}\s+(E\d{9})\b/);
+      if (!dataMatch) {
+        results.push("⚠️ " + msg.getSubject() + " — could not parse data row");
+        return;
+      }
+      var donating  = dataMatch[1];
+      var receiving = dataMatch[2];
+      var tracked   = eoRowMap.hasOwnProperty(donating);
+      var icon      = tracked ? "✅" : "❌ donating EO not in tab";
+      results.push(icon + "  Donating: " + donating + "  →  Receiving: " + receiving +
+                   "  [" + msg.getSubject().substring(0, 60) + "]");
+    });
+  });
+
+  var output = results.join("\n");
+  console.log(output);
+  try {
+    SpreadsheetApp.getUi().alert("P2P Debug", output, SpreadsheetApp.getUi().ButtonSet.OK);
+  } catch(e) {}
+}
+
 // Debug: shows plain body + parse results for the most recent UNeFI Submitted email
 function debugEOEmailParsing() {
   var results = [];
