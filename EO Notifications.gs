@@ -18,7 +18,7 @@ function checkEONotifications() {
   // Search only since last run; first run goes back 90 days
   var props = PropertiesService.getScriptProperties();
   var lastCheck = props.getProperty('lastEOCheckDate');
-  var searchQuery = 'subject:"ESA EO NOTIFICATION - UNeFI Request Submitted" ' +
+  var searchQuery = 'from:donotreply@verizon.com subject:"EO NOTIFICATION" ' +
     (lastCheck ? 'after:' + lastCheck : 'newer_than:90d');
 
   var threads = GmailApp.search(searchQuery);
@@ -70,23 +70,24 @@ function parseEONotificationEmail(body, eoNumber) {
   var mpn = "";
   var requestedQty = "";
 
-  // --- Main table: find the data row that starts with the EO number ---
-  // Columns: EO# | Type | Requisitioner | Capital WBS | Install Location | Install Location Desc | ...
-  var mainRowMatch = body.match(
-    new RegExp(eoNumber + '\\t[^\\t]+\\t[^\\t]+\\t[^\\t]+\\t([^\\t\\n\\r]+)\\t([^\\t\\n\\r]+)')
-  );
-  if (mainRowMatch) {
-    installLocation     = mainRowMatch[1].trim();
-    installLocationDesc = mainRowMatch[2].trim();
+  // Plain body separates table cells with spaces/newlines (not tabs).
+  // Data row pattern: ...VZ-XXXXXXXX.X.XXXX [Install Location] [Install Location Desc] [Amount.00]...
+
+  // Install Location (10-digit number starting with 5) and Install Location Desc
+  // Anchor on Capital WBS (VZ-XXXXXXXX.X.XXXX) since it uniquely precedes these fields
+  var locMatch = body.match(/VZ-[\d]+\.[A-Z]+\.[\d]+\s+(5\d{9})\s+([^\n]+?)\s+[\d,]{4,}\.\d{2}/);
+  if (locMatch) {
+    installLocation     = locMatch[1].trim();
+    installLocationDesc = locMatch[2].trim();
   }
 
-  // --- Line items table: find the first line item row (starts with 0010) ---
-  // Columns: EO Line Number | MMID ZHER | MPN | Material Description | Requested Qty
-  var lineRowMatch = body.match(/0010\t[^\t]+\t([^\t\n\r]+)\t[^\t\n\r]+\t([\d.]+)/);
-  if (lineRowMatch) {
-    mpn          = lineRowMatch[1].trim();
-    requestedQty = lineRowMatch[2].trim();
-  }
+  // MPN: alphanumeric part number format (e.g. RDH102409/1-PLV or RDH102409/1)
+  var mpnMatch = body.match(/\b([A-Z][A-Z0-9]{3,}\/\d+(?:-[A-Z0-9-]+)?)\b/);
+  if (mpnMatch) mpn = mpnMatch[1].trim();
+
+  // Requested Qty: number with exactly 3 decimal places (e.g. 50.000)
+  var qtyMatch = body.match(/\b(\d+\.\d{3})\b/);
+  if (qtyMatch) requestedQty = qtyMatch[1].trim();
 
   if (!installLocation && !mpn) return null;
 
@@ -106,29 +107,46 @@ function resetAndRescanEONotifications() {
 
 // Debug: shows the plain body of the most recent matching email
 function debugEOEmailParsing() {
-  var threads = GmailApp.search('subject:"ESA EO NOTIFICATION - UNeFI Request Submitted" newer_than:90d');
-  if (threads.length === 0) {
-    try { SpreadsheetApp.getUi().alert("EO Debug", "No matching emails found.", SpreadsheetApp.getUi().ButtonSet.OK); } catch(e) {}
-    return;
+  var results = [];
+
+  // Try progressively broader searches to find the email
+  var searches = [
+    'subject:"ESA EO NOTIFICATION - UNeFI Request Submitted" newer_than:90d',
+    'subject:"ESA EO NOTIFICATION" newer_than:90d',
+    'from:donotreply@verizon.com subject:"EO NOTIFICATION" newer_than:90d',
+    'from:donotreply@verizon.com "UNeFI Request Submitted" newer_than:90d',
+    'from:donotreply@verizon.com newer_than:7d'
+  ];
+
+  var foundMsg = null;
+  for (var s = 0; s < searches.length; s++) {
+    var threads = GmailApp.search(searches[s]);
+    results.push('Search ' + (s+1) + ': [' + searches[s] + '] → ' + threads.length + ' thread(s)');
+    if (threads.length > 0 && !foundMsg) {
+      foundMsg = threads[0].getMessages()[0];
+      results.push('  ✅ Found: ' + foundMsg.getSubject());
+    }
   }
 
-  var msg = threads[0].getMessages()[0];
-  var body = msg.getPlainBody();
-  var subject = msg.getSubject();
-  var eoMatch = subject.match(/E\d{9}/);
-  var eoNumber = eoMatch ? eoMatch[0] : "NOT FOUND";
-  var parsed = eoNumber !== "NOT FOUND" ? parseEONotificationEmail(body, eoNumber) : null;
+  if (!foundMsg) {
+    results.push("\n❌ No matching emails found with any search.");
+  } else {
+    var body = foundMsg.getPlainBody();
+    var subject = foundMsg.getSubject();
+    var eoMatch = subject.match(/E\d{9}/);
+    var eoNumber = eoMatch ? eoMatch[0] : "NOT FOUND";
+    var parsed = eoNumber !== "NOT FOUND" ? parseEONotificationEmail(body, eoNumber) : null;
 
-  var output = "Subject: " + subject +
-    "\nEO#: " + eoNumber +
-    "\n\nParsed:" +
-    "\n  Install Location: "     + (parsed ? parsed.installLocation     : "—") +
-    "\n  Install Location Desc: " + (parsed ? parsed.installLocationDesc : "—") +
-    "\n  MPN: "                  + (parsed ? parsed.mpn                 : "—") +
-    "\n  Requested Qty: "        + (parsed ? parsed.requestedQty        : "—") +
-    "\n\n--- PLAIN BODY (first 800 chars) ---\n" +
-    body.substring(0, 800);
+    results.push("\nEO#: " + eoNumber);
+    results.push("Parsed:");
+    results.push("  Install Location: "      + (parsed ? parsed.installLocation     : "❌ not found"));
+    results.push("  Install Location Desc: " + (parsed ? parsed.installLocationDesc : "❌ not found"));
+    results.push("  MPN: "                   + (parsed ? parsed.mpn                 : "❌ not found"));
+    results.push("  Requested Qty: "         + (parsed ? parsed.requestedQty        : "❌ not found"));
+    results.push("\n--- PLAIN BODY (first 800 chars) ---\n" + body.substring(0, 800));
+  }
 
+  var output = results.join("\n");
   console.log(output);
   try {
     SpreadsheetApp.getUi().alert("EO Debug", output, SpreadsheetApp.getUi().ButtonSet.OK);
