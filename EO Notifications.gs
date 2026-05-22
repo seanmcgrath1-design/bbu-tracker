@@ -279,8 +279,12 @@ function debugP2PSearch() {
       allEOs.forEach(function(e) { if (uniqueEOs.indexOf(e) === -1) uniqueEOs.push(e); });
       var dataMatch = uniqueEOs.length >= 2 ? [null, uniqueEOs[0], uniqueEOs[1]] : null;
       if (!dataMatch) {
-        failed++;
-        if (!plainBodySample) plainBodySample = body;
+        if (msg.getSubject().indexOf('Failed') !== -1) {
+          results.push("⏭️ skipped (transfer failed, no Receiving EO)");
+        } else {
+          failed++;
+          if (!plainBodySample) plainBodySample = body;
+        }
         return;
       }
       parsed++;
