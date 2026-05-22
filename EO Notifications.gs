@@ -178,6 +178,12 @@ function resetAndRescanEONotifications() {
   checkP2PTransfers();
 }
 
+// Lighter reset — only re-scans P2P transfers without re-running the full EO backfill
+function resetAndRescanP2POnly() {
+  PropertiesService.getScriptProperties().deleteProperty('lastP2PCheckDate');
+  checkP2PTransfers();
+}
+
 // Searches in 60-day chunks going back 180 days to stay under Gmail's 500-result cap
 function backfillEONotificationsChunked() {
   var ss = getEOSpreadsheet();
