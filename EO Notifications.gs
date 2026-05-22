@@ -166,13 +166,83 @@ function parseEONotificationEmail(body, eoNumber) {
   };
 }
 
-// Run once to reset date filters and re-scan the last 90 days for both checks
+// Run once to reset date filters and do a full chunked backfill + P2P scan
 function resetAndRescanEONotifications() {
   var props = PropertiesService.getScriptProperties();
   props.deleteProperty('lastEOCheckDate');
   props.deleteProperty('lastP2PCheckDate');
-  checkEONotifications();
+  backfillEONotificationsChunked();
   checkP2PTransfers();
+}
+
+// Searches in 60-day chunks going back 180 days to stay under Gmail's 500-result cap
+function backfillEONotificationsChunked() {
+  var ss = getEOSpreadsheet();
+  var eoSheet = ensureEOSheet(ss);
+
+  var existingData = eoSheet.getDataRange().getValues();
+  var existingEOs = {};
+  for (var i = 1; i < existingData.length; i++) {
+    existingEOs[String(existingData[i][1]).trim()] = true;
+  }
+
+  var today = new Date();
+  var tz = Session.getScriptTimeZone();
+  var rowsAdded = 0;
+  var chunkDays = 60;
+  var maxDays = 180;
+
+  for (var start = 0; start < maxDays; start += chunkDays) {
+    var dateFrom = new Date(today.getTime() - (start + chunkDays) * 86400000);
+    var dateTo   = new Date(today.getTime() - start * 86400000);
+    var fromStr  = Utilities.formatDate(dateFrom, tz, 'yyyy/MM/dd');
+    var toStr    = Utilities.formatDate(dateTo,   tz, 'yyyy/MM/dd');
+
+    var query = 'from:donotreply@verizon.com subject:"unefi request" after:' + fromStr + ' before:' + toStr;
+    var threads = GmailApp.search(query);
+    console.log('Chunk ' + fromStr + ' → ' + toStr + ': ' + threads.length + ' threads');
+
+    threads.forEach(function(thread) {
+      thread.getMessages().forEach(function(msg) {
+        var subject = msg.getSubject();
+        var isUnefi = subject.indexOf('UNeFI Request') !== -1 ||
+                      subject.indexOf('UNeFi Request') !== -1;
+        if (!isUnefi) return;
+
+        var eoMatch = subject.match(/E\d{9}/);
+        if (!eoMatch) return;
+        var eoNumber = eoMatch[0];
+        if (existingEOs[eoNumber]) return;
+
+        var parsed = parseEONotificationEmail(msg.getPlainBody(), eoNumber);
+        if (!parsed) return;
+
+        eoSheet.appendRow([
+          msg.getDate(),
+          eoNumber,
+          "",
+          parsed.installLocation,
+          parsed.installLocationDesc,
+          parsed.mpn,
+          parsed.requestedQty
+        ]);
+
+        existingEOs[eoNumber] = true;
+        rowsAdded++;
+      });
+    });
+  }
+
+  // Set lastEOCheckDate so the daily trigger picks up from today
+  PropertiesService.getScriptProperties().setProperty(
+    'lastEOCheckDate',
+    Utilities.formatDate(today, tz, 'yyyy/MM/dd')
+  );
+
+  console.log("Chunked backfill complete. Rows added: " + rowsAdded);
+  try {
+    SpreadsheetApp.getUi().alert("EO Backfill", rowsAdded + " new EO(s) added from 180-day backfill.", SpreadsheetApp.getUi().ButtonSet.OK);
+  } catch(e) {}
 }
 
 // Debug: shows plain body + parse results for the most recent UNeFI Submitted email
