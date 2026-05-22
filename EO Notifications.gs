@@ -245,11 +245,12 @@ function backfillEONotificationsChunked() {
   } catch(e) {}
 }
 
-// Debug: shows all P2P transfers found and whether their donating EOs are tracked
+// Debug: shows the plain body of the first failing P2P email to diagnose parse issues
 function debugP2PSearch() {
   var ss = getEOSpreadsheet();
   var eoSheet = ss.getSheetByName("EO's");
   var results = [];
+  var plainBodySample = null;
 
   var eoRowMap = {};
   if (eoSheet) {
@@ -264,24 +265,32 @@ function debugP2PSearch() {
   }
 
   var threads = GmailApp.search('from:donotreply@verizon.com subject:"Project to Project Transfer" newer_than:90d');
-  results.push("P2P emails found: " + threads.length + "\n");
+  results.push("P2P emails found: " + threads.length);
+  var parsed = 0, failed = 0;
 
   threads.forEach(function(thread) {
     thread.getMessages().forEach(function(msg) {
       var body = msg.getPlainBody();
       var dataMatch = body.match(/\b\d{7,8}\s+(E\d{9})\s+\d{10,}\s+(E\d{9})\b/);
       if (!dataMatch) {
-        results.push("⚠️ " + msg.getSubject() + " — could not parse data row");
+        failed++;
+        if (!plainBodySample) plainBodySample = body;
         return;
       }
-      var donating  = dataMatch[1];
+      parsed++;
+      var donating = dataMatch[1];
       var receiving = dataMatch[2];
-      var tracked   = eoRowMap.hasOwnProperty(donating);
-      var icon      = tracked ? "✅" : "❌ donating EO not in tab";
-      results.push(icon + "  Donating: " + donating + "  →  Receiving: " + receiving +
-                   "  [" + msg.getSubject().substring(0, 60) + "]");
+      var tracked = eoRowMap.hasOwnProperty(donating);
+      results.push((tracked ? "✅" : "❌ not tracked") + "  " + donating + " → " + receiving);
     });
   });
+
+  results.push("\nParsed: " + parsed + "  |  Failed: " + failed);
+
+  if (plainBodySample) {
+    results.push("\n--- PLAIN BODY OF FIRST FAILING EMAIL (first 800 chars) ---");
+    results.push(plainBodySample.substring(0, 800));
+  }
 
   var output = results.join("\n");
   console.log(output);
