@@ -103,7 +103,10 @@ function checkP2PTransfers() {
       var body = msg.getPlainBody();
 
       // Data row: [8-digit Donating SPM] [Donating E#] [long Receiving SPM] [Receiving E#]
-      var dataMatch = body.match(/\b\d{7,8}\s+(E\d{9})\s+\d{10,}\s+(E\d{9})\b/);
+      var allEOs = body.match(/E\d{9}/g) || [];
+      var uniqueEOs = [];
+      allEOs.forEach(function(e) { if (uniqueEOs.indexOf(e) === -1) uniqueEOs.push(e); });
+      var dataMatch = uniqueEOs.length >= 2 ? [null, uniqueEOs[0], uniqueEOs[1]] : null;
       if (!dataMatch) return;
 
       var donatingEO  = dataMatch[1];
@@ -271,7 +274,10 @@ function debugP2PSearch() {
   threads.forEach(function(thread) {
     thread.getMessages().forEach(function(msg) {
       var body = msg.getPlainBody();
-      var dataMatch = body.match(/\b\d{7,8}\s+(E\d{9})\s+\d{10,}\s+(E\d{9})\b/);
+      var allEOs = body.match(/E\d{9}/g) || [];
+      var uniqueEOs = [];
+      allEOs.forEach(function(e) { if (uniqueEOs.indexOf(e) === -1) uniqueEOs.push(e); });
+      var dataMatch = uniqueEOs.length >= 2 ? [null, uniqueEOs[0], uniqueEOs[1]] : null;
       if (!dataMatch) {
         failed++;
         if (!plainBodySample) plainBodySample = body;
