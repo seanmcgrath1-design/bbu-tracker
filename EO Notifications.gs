@@ -4,8 +4,13 @@
 // Columns: A=Date Received, B=EO#, C=Receiving EO#, D=Install Location,
 //          E=Install Location Desc, F=MPN, G=Requested Qty
 
+function getEOSpreadsheet() {
+  return SpreadsheetApp.getActiveSpreadsheet() ||
+         SpreadsheetApp.openById(TARGET_SPREADSHEET_ID);
+}
+
 function checkEONotifications() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ss = getEOSpreadsheet();
   var eoSheet = ensureEOSheet(ss);
 
   // Build set of already-logged EO#s to avoid duplicates
@@ -71,7 +76,7 @@ function checkEONotifications() {
 // Searches for P2P Transfer emails and updates col C (Receiving EO#)
 // for any row whose EO# matches the Donating EO in a transfer.
 function checkP2PTransfers() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ss = getEOSpreadsheet();
   var eoSheet = ss.getSheetByName("EO's");
   if (!eoSheet) return;
 
