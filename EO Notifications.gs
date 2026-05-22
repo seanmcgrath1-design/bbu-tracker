@@ -180,9 +180,9 @@ function debugEOEmailParsing() {
   var results = [];
 
   var searches = [
+    'from:donotreply@verizon.com subject:"unefi request" newer_than:180d',
+    'from:donotreply@verizon.com subject:"unefi request" newer_than:90d',
     'subject:"ESA EO NOTIFICATION - UNeFI Request Submitted" newer_than:90d',
-    'subject:"ESA EO NOTIFICATION" newer_than:90d',
-    'from:donotreply@verizon.com subject:"EO NOTIFICATION" newer_than:90d',
     'from:donotreply@verizon.com "UNeFI Request Submitted" newer_than:90d',
     'from:donotreply@verizon.com newer_than:7d'
   ];
