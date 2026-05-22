@@ -23,7 +23,7 @@ function checkEONotifications() {
   // Search only since last run; first run goes back 90 days
   var props = PropertiesService.getScriptProperties();
   var lastCheck = props.getProperty('lastEOCheckDate');
-  var searchQuery = 'from:donotreply@verizon.com subject:"EO NOTIFICATION" ' +
+  var searchQuery = 'from:donotreply@verizon.com subject:"unefi request" ' +
     (lastCheck ? 'after:' + lastCheck : 'newer_than:180d');
 
   var threads = GmailApp.search(searchQuery);
@@ -142,11 +142,10 @@ function parseEONotificationEmail(body, eoNumber) {
 
   // Plain body separates table cells with spaces/newlines (not tabs).
   // Anchor on Capital WBS (VZ-XXXXXXXX.X.XXXX) which uniquely precedes Install Location fields.
-  // Install Location Desc may be empty; Requested Amount may be as low as 0.00.
-  var locMatch = body.match(/VZ-[\d]+\.[A-Z]+\.[\d]+\s+(5\d{9})\s*(([^\n\d][^\n]*?)\s+)?[\d,]+\.\d{2}/);
-  if (locMatch) {
-    installLocation     = locMatch[1].trim();
-    installLocationDesc = locMatch[3] ? locMatch[3].trim() : "";
+  var wbsMatch = body.match(/VZ-[\d]+\.[A-Z]+\.[\d]+\s+(5\d{9})([ \t]+([^\n\d][^\n\d]*?))?[\t ]*(?:\n|[\d,]+\.\d{2})/);
+  if (wbsMatch) {
+    installLocation     = wbsMatch[1].trim();
+    installLocationDesc = wbsMatch[3] ? wbsMatch[3].trim() : "";
   }
 
   // MPN: alphanumeric part number format (e.g. RDH102409/1-PLV or RDH102409/1)
