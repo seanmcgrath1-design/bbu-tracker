@@ -1,8 +1,8 @@
 // ==========================================
 // EO NOTIFICATION TRACKER
 // ==========================================
-// Searches Gmail for "ESA EO NOTIFICATION - UNeFI Request Submitted" emails,
-// parses key fields, and logs them to the "EO's" tab.
+// Columns: A=Date Received, B=EO#, C=Receiving EO#, D=Install Location,
+//          E=Install Location Desc, F=MPN, G=Requested Qty
 
 function checkEONotifications() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -28,7 +28,10 @@ function checkEONotifications() {
     thread.getMessages().forEach(function(msg) {
       var subject = msg.getSubject();
 
-      // Extract EO# from subject line
+      // Only process UNeFI Request Submitted emails (not Approved, P2P, etc.)
+      if (subject.indexOf('UNeFI Request Submitted') === -1 &&
+          subject.indexOf('UNeFi Request Submitted') === -1) return;
+
       var eoMatch = subject.match(/E\d{9}/);
       if (!eoMatch) return;
       var eoNumber = eoMatch[0];
@@ -40,6 +43,7 @@ function checkEONotifications() {
       eoSheet.appendRow([
         msg.getDate(),
         eoNumber,
+        "",                        // Col C: Receiving EO# (filled by checkP2PTransfers)
         parsed.installLocation,
         parsed.installLocationDesc,
         parsed.mpn,
@@ -64,6 +68,66 @@ function checkEONotifications() {
   } catch(e) {}
 }
 
+// Searches for P2P Transfer emails and updates col C (Receiving EO#)
+// for any row whose EO# matches the Donating EO in a transfer.
+function checkP2PTransfers() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var eoSheet = ss.getSheetByName("EO's");
+  if (!eoSheet) return;
+
+  var eoData = eoSheet.getDataRange().getValues();
+
+  // Build map: Donating EO# → row index (1-based offset handled on write)
+  var eoRowMap = {};
+  for (var i = 1; i < eoData.length; i++) {
+    var eoNum = String(eoData[i][1]).trim();
+    if (eoNum) eoRowMap[eoNum] = i;
+  }
+
+  var props = PropertiesService.getScriptProperties();
+  var lastCheck = props.getProperty('lastP2PCheckDate');
+  var searchQuery = 'from:donotreply@verizon.com subject:"Project to Project Transfer" ' +
+    (lastCheck ? 'after:' + lastCheck : 'newer_than:90d');
+
+  var threads = GmailApp.search(searchQuery);
+  var updatesApplied = 0;
+
+  threads.forEach(function(thread) {
+    thread.getMessages().forEach(function(msg) {
+      var body = msg.getPlainBody();
+
+      // Data row: [8-digit Donating SPM] [Donating E#] [long Receiving SPM] [Receiving E#]
+      var dataMatch = body.match(/\b\d{7,8}\s+(E\d{9})\s+\d{10,}\s+(E\d{9})\b/);
+      if (!dataMatch) return;
+
+      var donatingEO  = dataMatch[1];
+      var receivingEO = dataMatch[2];
+
+      if (!eoRowMap.hasOwnProperty(donatingEO)) return;
+
+      var rowIdx = eoRowMap[donatingEO];
+      var currentReceiving = String(eoData[rowIdx][2]).trim(); // Col C
+      if (currentReceiving) return; // already recorded
+
+      eoSheet.getRange(rowIdx + 1, 3).setValue(receivingEO);
+      eoData[rowIdx][2] = receivingEO;
+      updatesApplied++;
+    });
+  });
+
+  props.setProperty('lastP2PCheckDate', Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy/MM/dd'));
+  console.log("P2P Transfer check complete. Updates applied: " + updatesApplied);
+
+  try {
+    var ui = SpreadsheetApp.getUi();
+    if (updatesApplied > 0) {
+      ui.alert("P2P Transfers", updatesApplied + " row(s) updated with Receiving EO#.", ui.ButtonSet.OK);
+    } else {
+      ui.alert("P2P Transfers", "No new P2P transfers matched existing EOs.", ui.ButtonSet.OK);
+    }
+  } catch(e) {}
+}
+
 function parseEONotificationEmail(body, eoNumber) {
   var installLocation = "";
   var installLocationDesc = "";
@@ -71,10 +135,7 @@ function parseEONotificationEmail(body, eoNumber) {
   var requestedQty = "";
 
   // Plain body separates table cells with spaces/newlines (not tabs).
-  // Data row pattern: ...VZ-XXXXXXXX.X.XXXX [Install Location] [Install Location Desc] [Amount.00]...
-
-  // Install Location (10-digit number starting with 5) and Install Location Desc
-  // Anchor on Capital WBS (VZ-XXXXXXXX.X.XXXX) since it uniquely precedes these fields
+  // Anchor on Capital WBS (VZ-XXXXXXXX.X.XXXX) which uniquely precedes Install Location fields.
   var locMatch = body.match(/VZ-[\d]+\.[A-Z]+\.[\d]+\s+(5\d{9})\s+([^\n]+?)\s+[\d,]{4,}\.\d{2}/);
   if (locMatch) {
     installLocation     = locMatch[1].trim();
@@ -99,17 +160,19 @@ function parseEONotificationEmail(body, eoNumber) {
   };
 }
 
-// Run once to reset the date filter and re-scan the last 90 days
+// Run once to reset date filters and re-scan the last 90 days for both checks
 function resetAndRescanEONotifications() {
-  PropertiesService.getScriptProperties().deleteProperty('lastEOCheckDate');
+  var props = PropertiesService.getScriptProperties();
+  props.deleteProperty('lastEOCheckDate');
+  props.deleteProperty('lastP2PCheckDate');
   checkEONotifications();
+  checkP2PTransfers();
 }
 
-// Debug: shows the plain body of the most recent matching email
+// Debug: shows plain body + parse results for the most recent UNeFI Submitted email
 function debugEOEmailParsing() {
   var results = [];
 
-  // Try progressively broader searches to find the email
   var searches = [
     'subject:"ESA EO NOTIFICATION - UNeFI Request Submitted" newer_than:90d',
     'subject:"ESA EO NOTIFICATION" newer_than:90d',
@@ -154,30 +217,42 @@ function debugEOEmailParsing() {
 }
 
 function ensureEOSheet(ss) {
+  var headers = ["Date Received", "EO#", "Receiving EO#", "Install Location", "Install Location Desc", "MPN", "Requested Qty"];
   var sheet = ss.getSheetByName("EO's");
+
   if (!sheet) {
     sheet = ss.insertSheet("EO's");
-    var headers = ["Date Received", "EO#", "Install Location", "Install Location Desc", "MPN", "Requested Qty"];
     sheet.appendRow(headers);
     sheet.getRange(1, 1, 1, headers.length)
       .setBackground("#4f81bd").setFontColor("#ffffff").setFontWeight("bold");
     sheet.setFrozenRows(1);
+    return sheet;
   }
+
+  // Migrate existing sheet: insert "Receiving EO#" column if not present
+  var firstRow = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  if (firstRow[2] !== "Receiving EO#") {
+    sheet.insertColumnAfter(2); // Insert after col B
+    sheet.getRange(1, 3).setValue("Receiving EO#")
+      .setBackground("#4f81bd").setFontColor("#ffffff").setFontWeight("bold");
+  }
+
   return sheet;
 }
 
 function setupEONotificationTrigger() {
+  var handlersToSetup = ['checkEONotifications', 'checkP2PTransfers'];
   ScriptApp.getProjectTriggers().forEach(function(trigger) {
-    if (trigger.getHandlerFunction() === 'checkEONotifications') {
+    if (handlersToSetup.indexOf(trigger.getHandlerFunction()) !== -1) {
       ScriptApp.deleteTrigger(trigger);
     }
   });
 
-  ScriptApp.newTrigger('checkEONotifications')
-    .timeBased().everyDays(1).atHour(9).create();
+  ScriptApp.newTrigger('checkEONotifications').timeBased().everyDays(1).atHour(9).create();
+  ScriptApp.newTrigger('checkP2PTransfers').timeBased().everyDays(1).atHour(9).create();
 
-  console.log("EO notification trigger set for 9 AM daily.");
+  console.log("EO and P2P triggers set for 9 AM daily.");
   try {
-    SpreadsheetApp.getUi().alert("EO Notifications", "Daily trigger set for 9 AM.", SpreadsheetApp.getUi().ButtonSet.OK);
+    SpreadsheetApp.getUi().alert("EO Notifications", "Daily triggers set for 9 AM:\n• EO Notifications\n• P2P Transfers", SpreadsheetApp.getUi().ButtonSet.OK);
   } catch(e) {}
 }
