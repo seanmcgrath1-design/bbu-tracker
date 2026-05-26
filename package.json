@@ -1,0 +1,23 @@
+{
+  "name": "bbu-tracker",
+  "version": "1.0.0",
+  "description": "This repository contains the Google Apps Script source files for the BBU Tracker, managed with [clasp](https://github.com/google/clasp).",
+  "main": "CQ status.js",
+  "scripts": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/seanmcgrath1-design/bbu-tracker.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/seanmcgrath1-design/bbu-tracker/issues"
+  },
+  "homepage": "https://github.com/seanmcgrath1-design/bbu-tracker#readme",
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "@types/node": "^25.9.1"
+  }
+}

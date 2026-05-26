@@ -124,6 +124,14 @@ Discussed in Claude session 2026-05-21.
 
 ---
 
+## Bulk EO Creation (Playwright Automation)
+
+The `Bulk EO Creation/` folder contains Playwright scripts that automate cloning and releasing Engineering Orders in the Verizon order management app.
+
+See [Bulk EO Creation/README.md](Bulk%20EO%20Creation/README.md) for setup instructions, how to run scripts, and how to create new ones for different parts.
+
+---
+
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for a record of changes by session.
