@@ -1,7 +1,7 @@
 import { test, expect, Page } from '@playwright/test';
 
 // Source EO to clone from
-const SOURCE_EO = 'E000270779';
+const SOURCE_EO = 'E000239551';
 
 // Target date for all cloned EOs (MM/DD/YYYY and YYYYMMDD for calendar cell ID)
 const TARGET_DATE = '07/17/2026';
@@ -26,7 +26,7 @@ async function submitEO(eoPage: Page) {
   await eoPage.getByRole('button', { name: 'Submit' }).click();
 }
 
-test('Clone and submit EOs - ProLabs V1 SFP', async ({ page }) => {
+test('Clone and submit EOs', async ({ page }) => {
   test.setTimeout(180000); // 3 minutes — SSO redirect can be slow
 
   if (SPM_IDS.some((id) => !id)) {

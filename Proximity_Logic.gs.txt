@@ -1,0 +1,1252 @@
+function onOpen() {
+  const ui = SpreadsheetApp.getUi();
+  ui.createMenu('🛠️ BBU Tools')
+    .addItem('1a. Run Sector Pairing (All Hubs)', 'pairSectorsByMapLinks')
+    .addItem('1b. Run Sector Pairing (Single Hub)', 'pairSectorsForSingleHub')
+    .addSeparator()
+    .addItem('2. Export to Google Earth (KML)', 'exportToGoogleEarth')
+    .addSeparator()
+    .addItem('3. Link to BBU Mapping', 'openBBUClusterMap')
+    .addSeparator()
+    .addItem('4a. Generate CQ Only Draft (by Fuze ID)', 'generateCQOnlyDraftByFuze')
+    .addItem('4b. Run Full Handoff Batch Manually', 'generateHandoffDrafts')
+    .addSeparator()
+    .addItem('5a. Calculate Open Ports by Hub', 'calculateOpenPorts')
+    .addItem('5b. Generate Full Open Ports Report', 'generateFullPortReport')
+    .addItem('📧 Send Weekly Port Report Now', 'emailWeeklyPortReport')
+    .addSeparator()
+    .addItem('6. Master Site Update & Highlight', 'masterSiteUpdateAndHighlight')
+    .addSeparator()
+    .addItem('🔍 Debug Rogue Node', 'debugRogueNode')
+    .addToUi();
+}
+
+function onOpen() {
+  const ui = SpreadsheetApp.getUi();
+  ui.createMenu('🛠️ BBU Tools')
+    .addItem('1a. Run Sector Pairing (All Hubs)', 'pairSectorsByMapLinks')
+    .addItem('1b. Run Sector Pairing (Single Hub)', 'pairSectorsForSingleHub')
+    .addSeparator()
+    .addItem('2. Export to Google Earth (KML)', 'exportToGoogleEarth')
+    .addSeparator()
+    .addItem('3. Link to BBU Mapping', 'openBBUClusterMap')
+    .addSeparator()
+    .addItem('4. Generate CQ Only Draft (by Fuze ID)', 'generateCQOnlyDraftByFuze')
+    .addSeparator()
+    .addItem('5. Run Full Handoff Batch Manually', 'generateHandoffDrafts')
+    .addSeparator()
+    .addItem('6a. Calculate Open Ports by Hub', 'calculateOpenPorts')
+    .addItem('6b. Generate Full Open Ports Report', 'generateFullPortReport')
+    .addItem('📧 Send Weekly Port Report Now', 'emailWeeklyPortReport')
+    .addSeparator()
+    .addItem('7. Master Site Update & Highlight', 'masterSiteUpdateAndHighlight')
+    .addSeparator()
+    .addItem('🔍 Debug Rogue Node', 'debugRogueNode')
+    .addToUi();
+}
+
+/**
+ * Installs the Monday 8AM trigger for the email
+ */
+function setupWeeklyEmailTrigger() {
+  const triggers = ScriptApp.getProjectTriggers();
+  for (let i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === "emailWeeklyPortReport") {
+      SpreadsheetApp.getUi().alert("Trigger Already Exists", "The Monday automated email is already set up!", SpreadsheetApp.getUi().ButtonSet.OK);
+      return;
+    }
+  }
+  ScriptApp.newTrigger("emailWeeklyPortReport")
+    .timeBased()
+    .onWeekDay(ScriptApp.WeekDay.MONDAY)
+    .atHour(8)
+    .create();
+  SpreadsheetApp.getUi().alert("Success", "Automated email scheduled! You will receive the Open Ports report every Monday morning.", SpreadsheetApp.getUi().ButtonSet.OK);
+}
+
+/**
+ * Generates the Open Ports data and emails it
+ */
+function emailWeeklyPortReport() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const mainSheet = ss.getSheetByName("Site Detail");
+  if (!mainSheet) return;
+
+  const mainRaw = mainSheet.getRange(1, 1, 10, mainSheet.getLastColumn()).getValues();
+  let mHubCol = -1, mTechCol = -1, mBbuCol = -1, mOutCol = -1, mSecCol = -1, headerRow = -1;
+
+  for (let r = 0; r < mainRaw.length; r++) {
+    let row = mainRaw[r].map(h => String(h).toLowerCase().trim());
+    let hubCheck = row.findIndex(h => h === "hub");
+    if (hubCheck > -1) {
+      mHubCol = hubCheck;
+      mTechCol = row.findIndex(h => h.includes("tech"));
+      mBbuCol = row.findIndex(h => h.includes("bbu"));
+      mOutCol = row.findIndex(h => h.includes("pairing"));
+      mSecCol = row.findIndex(h => h.includes("sector"));
+      headerRow = r; break;
+    }
+  }
+  if (mHubCol === -1 || mOutCol === -1) return;
+
+  const mainData = mainSheet.getDataRange().getValues().slice(headerRow + 1);
+  const outputFormulas = mainSheet.getRange(headerRow + 2, mOutCol + 1, mainData.length, 1).getFormulas();
+  let hubData = {}; 
+
+  for (let j = 0; j < mainData.length; j++) {
+    let hubName = String(mainData[j][mHubCol]).trim().toUpperCase();
+    if (!hubName || hubName === "UNDEFINED") continue;
+    
+    let tech = String(mainData[j][mTechCol]).toUpperCase().trim();
+    let bbuVal = String(mainData[j][mBbuCol]).trim();
+    let formula = String(outputFormulas[j][0]);
+    let sectorVal = (mSecCol !== -1) ? String(mainData[j][mSecCol]).trim() : "";
+    
+    let is5GOnly = tech.includes("5G") && !tech.includes("4G"); 
+    let isPrePaired = bbuVal !== ""; 
+    let isConfirmed = (sectorVal !== "");
+    let clusterId = isPrePaired ? "BBU_" + bbuVal : (formula.match(/HYPERLINK\("([^"]+)"/i) ? "URL_" + formula.match(/HYPERLINK\("([^"]+)"/i)[1] : "STANDALONE_" + j);
+
+    if (!hubData[hubName]) hubData[hubName] = { clusters: {} };
+    if (!hubData[hubName].clusters[clusterId]) {
+      hubData[hubName].clusters[clusterId] = { techType: is5GOnly ? '5G' : '4G/5G', isPrePaired: isPrePaired, confirmedPorts: 0 };
+    } else if (!is5GOnly) {
+      hubData[hubName].clusters[clusterId].techType = '4G/5G'; 
+    }
+    if (isPrePaired) hubData[hubName].clusters[clusterId].isPrePaired = true;
+    if (isConfirmed) hubData[hubName].clusters[clusterId].confirmedPorts++;
+  }
+
+  let totalNetwork4G = 0, totalNetwork5G = 0;
+  let htmlTable = `<table style="border-collapse: collapse; width: 100%; font-family: Arial, sans-serif;">
+    <tr style="background-color: #d52b1e; color: white;">
+      <th style="padding: 10px; border: 1px solid #ccc;">Hub Name</th>
+      <th style="padding: 10px; border: 1px solid #ccc;">4G/5G Open Ports</th>
+      <th style="padding: 10px; border: 1px solid #ccc;">5G Open Ports</th>
+      <th style="padding: 10px; border: 1px solid #ccc;">Total Open Ports</th>
+    </tr>`;
+
+  let sortedHubs = Object.keys(hubData).sort();
+  sortedHubs.forEach(hub => {
+    let open4G = 0, open5G = 0;
+    for (let cid in hubData[hub].clusters) {
+      let cluster = hubData[hub].clusters[cid];
+      if (cluster.isPrePaired || cluster.confirmedPorts > 0) {
+        let maxCap = cid.startsWith("BBU_6651") ? cluster.confirmedPorts : (cluster.techType === '5G' ? 6 : 3);
+        let openSlots = maxCap - cluster.confirmedPorts;
+        if (openSlots > 0) {
+          cluster.techType === '5G' ? (open5G += openSlots, totalNetwork5G += openSlots) : (open4G += openSlots, totalNetwork4G += openSlots);
+        }
+      }
+    }
+    if (open4G > 0 || open5G > 0) {
+      htmlTable += `<tr>
+        <td style="padding: 8px; border: 1px solid #ccc;">${hub}</td>
+        <td style="padding: 8px; border: 1px solid #ccc; text-align: center;">${open4G}</td>
+        <td style="padding: 8px; border: 1px solid #ccc; text-align: center;">${open5G}</td>
+        <td style="padding: 8px; border: 1px solid #ccc; text-align: center; font-weight: bold;">${open4G + open5G}</td>
+      </tr>`;
+    }
+  });
+
+  htmlTable += `<tr style="background-color: #f2f2f2; font-weight: bold;">
+      <td style="padding: 10px; border: 1px solid #ccc;">NETWORK TOTALS</td>
+      <td style="padding: 10px; border: 1px solid #ccc; text-align: center;">${totalNetwork4G}</td>
+      <td style="padding: 10px; border: 1px solid #ccc; text-align: center;">${totalNetwork5G}</td>
+      <td style="padding: 10px; border: 1px solid #ccc; text-align: center; color: #d52b1e;">${totalNetwork4G + totalNetwork5G}</td>
+    </tr></table>`;
+
+  const emailBody = `
+    <div style="font-family: Arial, sans-serif; color: #333;">
+      <h2 style="color: #000;">Weekly BBU Open Ports Report</h2>
+      <p>Here is the current status of open ports across all active and pre-paired BBU clusters:</p>
+      ${htmlTable}
+      <br><p style="font-size: 12px; color: #666;">This is an automated report generated by your BBU Mapping Tool.</p>
+    </div>`;
+
+  MailApp.sendEmail({
+    to: "sean.mcgrath1@verizonwireless.com",
+    subject: "Weekly BBU Open Ports Report",
+    htmlBody: emailBody
+  });
+}
+
+function findCol(rawArray, keyword1, keyword2 = "") {
+  for (let r = 0; r < rawArray.length; r++) {
+    let row = rawArray[r].map(h => String(h).toLowerCase().trim());
+    let idx = row.findIndex(h => h.includes(keyword1) && (keyword2 === "" || h.includes(keyword2)));
+    if (idx > -1) return { col: idx, row: r };
+  }
+  return { col: -1, row: -1 };
+}
+
+// STRICT CQ COLUMN FINDER (Ignores "ACQ" and other false positives)
+function getCqCol(rawArray) {
+  for (let r = 0; r < rawArray.length; r++) {
+    let row = rawArray[r].map(h => String(h).toLowerCase().trim().replace(/[^a-z0-9\s]/g, ''));
+    let idx = row.findIndex(h => h === "rf cq" || h === "rf cq completed" || h === "cq" || h === "rfcq");
+    if (idx > -1) return { col: idx, row: r };
+  }
+  return { col: -1, row: -1 };
+}
+
+const PALETTE_COLORS = [
+  '#FFADAD', '#FFD6A5', '#FDFFB6', '#CAFFBF', '#9BF6FF', '#A0C4FF', '#BDB2FF', '#FFC6FF', '#F5F5DC', '#E0FFFF',
+  '#FAFAD2', '#D3D3D3', '#98FB98', '#FFB6C1', '#FFA07A', '#87CEFA', '#F0E68C', '#E6E6FA', '#FFF0F5', '#7FFFD4',
+  '#FFE4B5', '#FFDAB9', '#DDA0DD', '#B0E0E6', '#FFC0CB', '#F5DEB3', '#00FF00', '#00FFFF', '#FFFF00', '#FF7F50',
+  '#00FA9A', '#87CEEB', '#FF69B4', '#BA55D3', '#32CD32', '#F08080', '#FA8072', '#40E0D0', '#EE82EE', '#FFD700'
+];
+
+function pairSectorsByMapLinks() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let ui = null; try { ui = SpreadsheetApp.getUi(); } catch (e) {}
+  
+  const dumpSheet = ss.getSheetByName("Daily Data Dump");
+  if (!dumpSheet) return;
+  const dumpRaw = dumpSheet.getRange(1, 1, 10, dumpSheet.getLastColumn()).getValues();
+  let dIdData = findCol(dumpRaw, "fuze", "id");
+  let dLatCol = findCol(dumpRaw, "latitude").col;
+  let dLngCol = findCol(dumpRaw, "longitude").col;
+  
+  let dCqCol = getCqCol(dumpRaw).col;
+
+  if (dIdData.col === -1 || dLatCol === -1 || dLngCol === -1) return;
+
+  const dumpData = dumpSheet.getDataRange().getValues().slice(dIdData.row + 1);
+  let geoMap = {};
+  
+  dumpData.forEach(row => {
+    let rawId = String(row[dIdData.col]).replace(/\D/g, ""); 
+    if (rawId) {
+      let pLat = parseFloat(row[dLatCol]);
+      let pLng = parseFloat(row[dLngCol]);
+      
+      let cqVal = (dCqCol > -1) ? String(row[dCqCol]).trim().toLowerCase() : "";
+      // Ignore 1900 dates, TBD, N/A, etc.
+      let hasCQ = (cqVal !== "" && cqVal !== "tbd" && cqVal !== "n/a" && cqVal !== "pending" && !cqVal.includes("1900"));
+
+      geoMap[rawId] = { 
+        lat: (isNaN(pLat) || pLat === 0) ? null : pLat, 
+        lng: (isNaN(pLng) || pLng === 0) ? null : pLng,
+        hasCQ: hasCQ
+      };
+    }
+  });
+
+  const mainSheet = ss.getSheetByName("Site Detail");
+  const mainRaw = mainSheet.getRange(1, 1, 10, mainSheet.getLastColumn()).getValues();
+  let mIdData = findCol(mainRaw, "fuze", "id");
+  let mIdCol = mIdData.col; let mHeaderRow = mIdData.row; 
+  let mHubCol = findCol(mainRaw, "hub").col; let mTechCol = findCol(mainRaw, "tech").col;
+  let mBbuCol = findCol(mainRaw, "bbu").col; let mOutCol = findCol(mainRaw, "pairing").col;
+  let mDistCol = findCol(mainRaw, "distance").col; let mSecCol = findCol(mainRaw, "sector").col;
+  let mDateCol = findCol(mainRaw, "construction").col;
+
+  let mCqCol = getCqCol(mainRaw).col;
+
+  if (mOutCol === -1) return;
+  const mainData = mainSheet.getDataRange().getValues().slice(mHeaderRow + 1);
+  const secBgColors = (mSecCol !== -1) ? mainSheet.getRange(mHeaderRow + 2, mSecCol + 1, mainData.length, 1).getBackgrounds() : null;
+  const existingPairingFormulas = mainSheet.getRange(mHeaderRow + 2, mOutCol + 1, mainData.length, 1).getFormulas();
+  const existingPairingBgs = mainSheet.getRange(mHeaderRow + 2, mOutCol + 1, mainData.length, 1).getBackgrounds();
+
+  let hubGroups = {};
+  for (let j = 0; j < mainData.length; j++) {
+    let hub = String(mainData[j][mHubCol]).trim();
+    let tech = String(mainData[j][mTechCol]).toUpperCase().trim();
+    if (!hub || hub === "undefined" || tech === "") continue;
+
+    let cleanId = String(mainData[j][mIdCol]).replace(/\D/g, "");
+    let coords = geoMap[cleanId] || { lat: null, lng: null, hasCQ: false };
+
+    let mCqVal = (mCqCol > -1) ? String(mainData[j][mCqCol]).trim().toLowerCase() : "";
+    // Ignore 1900 dates on the main sheet check too
+    let mainHasCQ = (mCqVal !== "" && mCqVal !== "tbd" && mCqVal !== "n/a" && mCqVal !== "pending" && !mCqVal.includes("1900"));
+    let isLockedCQ = coords.hasCQ || mainHasCQ;
+
+    if (!hubGroups[hub]) hubGroups[hub] = [];
+    hubGroups[hub].push({
+      row: j + mHeaderRow + 2,
+      is5G: tech.includes("5G") && !tech.includes("4G"),
+      lat: coords.lat, lng: coords.lng,
+      bbu: String(mainData[j][mBbuCol]).trim() !== "" ? String(mainData[j][mBbuCol]).trim() : null,
+      sector: (mSecCol !== -1) ? String(mainData[j][mSecCol]).trim() : "",
+      color: (secBgColors && secBgColors[j][0] !== '#ffffff') ? secBgColors[j][0] : null,
+      date: (mDateCol !== -1) ? mainData[j][mDateCol] : "",
+      isLockedCQ: isLockedCQ,
+      savedFormula: existingPairingFormulas[j][0],
+      savedBg: existingPairingBgs[j][0]
+    });
+  }
+
+  function getDist(lat1, lon1, lat2, lon2) {
+    if (!lat1 || !lon1 || !lat2 || !lon2 || isNaN(lat1) || isNaN(lat2)) return 999999;
+    const p = 0.017453292519943295, c = Math.cos;
+    const a = 0.5 - c((lat2 - lat1) * p)/2 + c(lat1 * p) * c(lat2 * p) * (1 - c((lon2 - lon1) * p))/2;
+    return 12742 * Math.asin(Math.sqrt(a));
+  }
+
+  function createClusters(nodes, max) {
+    let res = [], pool = [...nodes];
+    while (pool.length > 0) {
+      if (pool.length <= max) { res.push(pool); break; }
+      let bestD = Infinity, p1 = 0, p2 = 1;
+      for (let i = 0; i < pool.length; i++) {
+        for (let k = i + 1; k < pool.length; k++) {
+          let d = getDist(pool[i].lat, pool[i].lng, pool[k].lat, pool[k].lng);
+          if (d < bestD) { bestD = d; p1 = i; p2 = k; }
+        }
+      }
+      let cluster = [pool[p1], pool[p2]];
+      pool.splice(Math.max(p1, p2), 1); pool.splice(Math.min(p1, p2), 1);
+      
+      while (cluster.length < max && pool.length > 0) {
+        let cLat = cluster.reduce((s, n) => s + parseFloat(n.lat), 0) / cluster.length;
+        let cLng = cluster.reduce((s, n) => s + parseFloat(n.lng), 0) / cluster.length;
+        let bD = Infinity, bIdx = 0;
+        for (let i = 0; i < pool.length; i++) {
+          let d = getDist(cLat, cLng, pool[i].lat, pool[i].lng);
+          if (d < bD) { bD = d; bIdx = i; }
+        }
+        cluster.push(pool.splice(bIdx, 1)[0]);
+      }
+      res.push(cluster);
+    }
+    return res;
+  }
+
+  mainSheet.getRange(mHeaderRow + 2, mOutCol + 1, mainSheet.getLastRow(), 1).clearContent().clearFormat();
+  if (mDistCol !== -1) mainSheet.getRange(mHeaderRow + 2, mDistCol + 1, mainSheet.getLastRow(), 1).clearContent().clearFormat();
+
+  let bbuCounter = 0;
+  for (let h in hubGroups) {
+    let sites = hubGroups[h], pre = sites.filter(s => s.bbu !== null), un = sites.filter(s => s.bbu === null);
+    let bbuMap = {};
+    pre.forEach(s => { if (!bbuMap[s.bbu]) bbuMap[s.bbu] = []; bbuMap[s.bbu].push(s); });
+
+    for (let id in bbuMap) {
+      let grp = bbuMap[id];
+      let max = grp[0].is5G ? 6 : 3;
+      if (String(id).trim().startsWith("6651")) { max = grp.length; }
+      
+      let open = max - grp.length;
+      if (open > 0) {
+        let pool = un.filter(s => s.is5G === grp[0].is5G);
+        if (pool.length > 0) {
+          let cLat = grp.reduce((s, n) => s + parseFloat(n.lat), 0) / grp.length;
+          let cLng = grp.reduce((s, n) => s + parseFloat(n.lng), 0) / grp.length;
+          pool.forEach(c => {
+            c.d = getDist(cLat, cLng, c.lat, c.lng);
+            c.t = (c.date && !isNaN(new Date(c.date).getTime())) ? new Date(c.date).getTime() : Infinity;
+          });
+          pool.sort((a, b) => a.t !== b.t ? a.t - b.t : a.d - b.d);
+          pool.splice(0, open).forEach(a => {
+            grp.push(a);
+            let idx = un.findIndex(u => u.row === a.row);
+            if (idx > -1) un.splice(idx, 1);
+          });
+        }
+      }
+      writeCluster(grp, bbuCounter++, mainSheet, mOutCol, mDistCol, PALETTE_COLORS);
+    }
+
+    if (un.length > 0 && un.length <= 3) {
+      createClusters(un, 3).forEach(c => writeCluster(c, bbuCounter++, mainSheet, mOutCol, mDistCol, PALETTE_COLORS));
+    } else if (un.length > 3) {
+      createClusters(un.filter(s => s.is5G), 6).forEach(c => writeCluster(c, bbuCounter++, mainSheet, mOutCol, mDistCol, PALETTE_COLORS));
+      createClusters(un.filter(s => !s.is5G), 3).forEach(c => writeCluster(c, bbuCounter++, mainSheet, mOutCol, mDistCol, PALETTE_COLORS));
+    }
+  }
+
+  function writeCluster(chunk, cIdx, sh, outCol, distCol, colArr) {
+    let url = ""; 
+    let clusterValid = true, maxD = 0;
+    
+    let isNodeValid = (n) => n.lat !== null && n.lng !== null;
+    chunk.forEach(s => { if (!isNodeValid(s)) clusterValid = false; });
+    
+    for (let i = 0; i < chunk.length; i++) {
+      for (let k = i + 1; k < chunk.length; k++) {
+        let d = getDist(chunk[i].lat, chunk[i].lng, chunk[k].lat, chunk[k].lng);
+        if (d !== 999999 && d > maxD) maxD = d;
+      }
+    }
+    
+    chunk.sort((a, b) => {
+      let timeA = (a.date && !isNaN(new Date(a.date).getTime())) ? new Date(a.date).getTime() : Infinity;
+      let timeB = (b.date && !isNaN(new Date(b.date).getTime())) ? new Date(b.date).getTime() : Infinity;
+      return timeA - timeB; 
+    });
+    
+    if (chunk.length === 1 && clusterValid) {
+      url = "https://www.google.com/maps/search/?api=1&query=" + chunk[0].lat + "," + chunk[0].lng;
+    } else if (clusterValid) {
+      url = "https://www.google.com/maps/dir/";
+      chunk.forEach(s => { if (s.lat) url += s.lat + "," + s.lng + "/"; });
+    }
+
+    let lockedNodeWithColor = chunk.find(s => s.isLockedCQ && String(s.sector).trim() !== "" && s.color && s.color !== '#ffffff');
+    let bg = lockedNodeWithColor ? lockedNodeWithColor.color : 
+             (chunk.find(s => String(s.sector).trim() === "1" && s.color && s.color !== '#ffffff')?.color || chunk.find(s => s.color && s.color !== '#ffffff')?.color || colArr[cIdx % colArr.length]);
+    
+    let used = [];
+    let maxCap = chunk[0].is5G ? 6 : 3;
+    if (chunk[0].bbu && String(chunk[0].bbu).startsWith("6651")) maxCap = chunk.length; 
+    let isFull = (chunk.length >= maxCap);
+    
+    // Explicitly lock the exact numbers of CQ nodes ONLY IF THEY HAVE A NUMBER
+    chunk.forEach(s => {
+      let secStr = String(s.sector).trim();
+      if (s.isLockedCQ && secStr !== "") {
+        used.push(secStr);
+      }
+    });
+    
+    chunk.forEach(s => {
+      let sec;
+      let cellBg = bg;
+      let secStr = String(s.sector).trim();
+      let trulyLocked = (s.isLockedCQ && secStr !== "");
+
+      if (trulyLocked) {
+        sec = secStr;
+        cellBg = (s.color && s.color !== '#ffffff') ? s.color : bg;
+      } else {
+        sec = 1;
+        while (used.includes(String(sec))) sec++;
+        used.push(String(sec));
+      }
+      
+      let cell = sh.getRange(s.row, outCol + 1);
+      cell.clearContent().clearFormat();
+      if (trulyLocked && s.savedFormula) cell.setFormula(s.savedFormula);
+      else if (clusterValid) cell.setFormula(`=HYPERLINK("${url}", "${sec}")`);
+      else cell.setValue(sec);
+
+      if (distCol !== -1) {
+        let dCell = sh.getRange(s.row, distCol + 1);
+        dCell.clearContent().clearFormat();
+
+        let nodeHasCoords = isNodeValid(s);
+
+        if (!nodeHasCoords) {
+          dCell.setValue("Missing Coords");
+          dCell.setBackground('#ff0000').setFontColor('#ffffff').setFontWeight('bold');
+        } else if (!clusterValid) {
+          dCell.setValue("Partner Missing Coords");
+          dCell.setBackground('#fce5cd').setFontColor('#cc0000').setFontWeight('bold');
+        } else {
+          let finalDist = chunk.length === 1 ? 0 : (maxD * 0.621371);
+          dCell.setValue(chunk.length === 1 ? "Standalone Node" : finalDist.toFixed(2));
+          if (finalDist > 11) {
+            dCell.setBackground('#ff0000').setFontColor('#ffffff').setFontWeight('bold');
+          } else {
+            dCell.setBackground('#ffffff').setFontColor('#000000').setFontWeight('normal');
+          }
+        }
+      }
+
+      let restoredBg = trulyLocked ? ((s.color && s.color !== '#ffffff') ? s.color : (s.savedBg && s.savedBg !== '#ffffff' ? s.savedBg : cellBg)) : cellBg;
+      cell.setBackground(restoredBg).setFontColor('#000000');
+      if (typeof mTechCol !== 'undefined' && mTechCol !== -1) {
+        let techCell = sh.getRange(s.row, mTechCol + 1);
+        if (isFull) techCell.setBackground(bg).setFontColor('#000000');
+        else techCell.setBackground('#ffffff').setFontColor('#000000');
+      }
+    });
+  }
+  if (ui) ss.toast("Success! Grouped perfectly with CQ Locks respected.");
+}
+
+function pairSectorsForSingleHub() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  
+  const response = ui.prompt('Single Hub Pairing', 'Enter the exact Hub Name you want to pair:', ui.ButtonSet.OK_CANCEL);
+  if (response.getSelectedButton() !== ui.Button.OK) return; 
+  const targetHub = response.getResponseText().trim().toLowerCase();
+  if (!targetHub) return;
+
+  const dumpSheet = ss.getSheetByName("Daily Data Dump");
+  if (!dumpSheet) throw new Error("Missing 'Daily Data Dump' tab.");
+  const dumpRaw = dumpSheet.getRange(1, 1, 10, dumpSheet.getLastColumn()).getValues();
+  let dIdData = findCol(dumpRaw, "fuze", "id");
+  let dLatCol = findCol(dumpRaw, "latitude").col;
+  let dLngCol = findCol(dumpRaw, "longitude").col;
+  
+  let dCqCol = getCqCol(dumpRaw).col;
+
+  if (dIdData.col === -1 || dLatCol === -1 || dLngCol === -1) {
+    ui.alert("Error", "Could not find required columns in Data Dump.", ui.ButtonSet.OK); return;
+  }
+
+  const dumpData = dumpSheet.getDataRange().getValues().slice(dIdData.row + 1);
+  let geoMap = {};
+  
+  dumpData.forEach(row => {
+    let rawId = String(row[dIdData.col]).replace(/\D/g, ""); 
+    if (rawId) {
+      let pLat = parseFloat(row[dLatCol]);
+      let pLng = parseFloat(row[dLngCol]);
+      let cqVal = (dCqCol > -1) ? String(row[dCqCol]).trim().toLowerCase() : "";
+      let hasCQ = (cqVal !== "" && cqVal !== "tbd" && cqVal !== "n/a" && cqVal !== "pending" && !cqVal.includes("1900"));
+
+      geoMap[rawId] = { 
+        lat: (isNaN(pLat) || pLat === 0) ? null : pLat, 
+        lng: (isNaN(pLng) || pLng === 0) ? null : pLng,
+        hasCQ: hasCQ
+      };
+    }
+  });
+
+  const mainSheet = ss.getSheetByName("Site Detail");
+  const mainRaw = mainSheet.getRange(1, 1, 10, mainSheet.getLastColumn()).getValues();
+  let mIdData = findCol(mainRaw, "fuze", "id");
+  let mIdCol = mIdData.col; let mHeaderRow = mIdData.row; 
+  let mHubCol = findCol(mainRaw, "hub").col; let mTechCol = findCol(mainRaw, "tech").col;
+  let mBbuCol = findCol(mainRaw, "bbu").col; let mOutCol = findCol(mainRaw, "pairing").col;
+  let mDistCol = findCol(mainRaw, "distance").col; let mSecCol = findCol(mainRaw, "sector").col;
+  let mDateCol = findCol(mainRaw, "construction").col;
+
+  let mCqCol = getCqCol(mainRaw).col;
+
+  const mainData = mainSheet.getDataRange().getValues().slice(mHeaderRow + 1);
+  const secBgColors = (mSecCol !== -1) ? mainSheet.getRange(mHeaderRow + 2, mSecCol + 1, mainData.length, 1).getBackgrounds() : null;
+  const existingPairingFormulas = mainSheet.getRange(mHeaderRow + 2, mOutCol + 1, mainData.length, 1).getFormulas();
+  const existingPairingBgs = mainSheet.getRange(mHeaderRow + 2, mOutCol + 1, mainData.length, 1).getBackgrounds();
+
+  let targetNodes = [];
+  let sitesFound = 0;
+  for (let j = 0; j < mainData.length; j++) {
+    let hub = String(mainData[j][mHubCol]).trim();
+    if (hub.toLowerCase() === targetHub) {
+      sitesFound++;
+      let tech = String(mainData[j][mTechCol]).toUpperCase().trim();
+      let cleanId = String(mainData[j][mIdCol]).replace(/\D/g, "");
+      let coords = geoMap[cleanId] || { lat: null, lng: null, hasCQ: false };
+      
+      let mCqVal = (mCqCol > -1) ? String(mainData[j][mCqCol]).trim().toLowerCase() : "";
+      let mainHasCQ = (mCqVal !== "" && mCqVal !== "tbd" && mCqVal !== "n/a" && mCqVal !== "pending" && !mCqVal.includes("1900"));
+      let isLockedCQ = coords.hasCQ || mainHasCQ;
+
+      targetNodes.push({
+        row: j + mHeaderRow + 2,
+        is5G: tech.includes("5G") && !tech.includes("4G"),
+        lat: coords.lat, lng: coords.lng,
+        bbu: String(mainData[j][mBbuCol]).trim() !== "" ? String(mainData[j][mBbuCol]).trim() : null,
+        sector: (mSecCol !== -1) ? String(mainData[j][mSecCol]).trim() : "",
+        color: (secBgColors && secBgColors[j][0] !== '#ffffff') ? secBgColors[j][0] : null,
+        date: (mDateCol !== -1) ? mainData[j][mDateCol] : "",
+        isLockedCQ: isLockedCQ,
+        savedFormula: existingPairingFormulas[j][0],
+        savedBg: existingPairingBgs[j][0]
+      });
+    }
+  }
+
+  function getDist(lat1, lon1, lat2, lon2) {
+    if (!lat1 || !lon1 || !lat2 || !lon2 || isNaN(lat1) || isNaN(lat2)) return 999999;
+    const p = 0.017453292519943295, c = Math.cos;
+    const a = 0.5 - c((lat2 - lat1) * p)/2 + c(lat1 * p) * c(lat2 * p) * (1 - c((lon2 - lon1) * p))/2;
+    return 12742 * Math.asin(Math.sqrt(a));
+  }
+
+  function createClusters(nodes, max) {
+    let res = [], pool = [...nodes];
+    while (pool.length > 0) {
+      if (pool.length <= max) { res.push(pool); break; }
+      let bestD = Infinity, p1 = 0, p2 = 1;
+      for (let i = 0; i < pool.length; i++) {
+        for (let k = i + 1; k < pool.length; k++) {
+          let d = getDist(pool[i].lat, pool[i].lng, pool[k].lat, pool[k].lng);
+          if (d < bestD) { bestD = d; p1 = i; p2 = k; }
+        }
+      }
+      let cluster = [pool[p1], pool[p2]];
+      pool.splice(Math.max(p1, p2), 1); pool.splice(Math.min(p1, p2), 1);
+      while (cluster.length < max && pool.length > 0) {
+        let cLat = cluster.reduce((s, n) => s + parseFloat(n.lat), 0) / cluster.length;
+        let cLng = cluster.reduce((s, n) => s + parseFloat(n.lng), 0) / cluster.length;
+        let bD = Infinity, bIdx = 0;
+        for (let i = 0; i < pool.length; i++) {
+          let d = getDist(cLat, cLng, pool[i].lat, pool[i].lng);
+          if (d < bD) { bD = d; bIdx = i; }
+        }
+        cluster.push(pool.splice(bIdx, 1)[0]);
+      }
+      res.push(cluster);
+    }
+    return res;
+  }
+
+  let pre = targetNodes.filter(s => s.bbu !== null);
+  let un = targetNodes.filter(s => s.bbu === null);
+  let bbuMap = {};
+  pre.forEach(s => { if (!bbuMap[s.bbu]) bbuMap[s.bbu] = []; bbuMap[s.bbu].push(s); });
+  let bbuCounter = 0;
+
+  for (let id in bbuMap) {
+    let grp = bbuMap[id];
+    let max = grp[0].is5G ? 6 : 3;
+    if (String(id).trim().startsWith("6651")) { max = grp.length; }
+    let open = max - grp.length;
+    if (open > 0) {
+      let pool = un.filter(s => s.is5G === grp[0].is5G);
+      if (pool.length > 0) {
+        let cLat = grp.reduce((s, n) => s + parseFloat(n.lat), 0) / grp.length;
+        let cLng = grp.reduce((s, n) => s + parseFloat(n.lng), 0) / grp.length;
+        pool.forEach(c => {
+          c.d = getDist(cLat, cLng, c.lat, c.lng);
+          c.t = (c.date && !isNaN(new Date(c.date).getTime())) ? new Date(c.date).getTime() : Infinity;
+        });
+        pool.sort((a, b) => a.t !== b.t ? a.t - b.t : a.d - b.d);
+        pool.splice(0, open).forEach(a => {
+          grp.push(a);
+          let idx = un.findIndex(u => u.row === a.row);
+          if (idx > -1) un.splice(idx, 1);
+        });
+      }
+    }
+    writeCluster(grp, bbuCounter++, mainSheet, mOutCol, mDistCol, PALETTE_COLORS);
+  }
+
+  if (un.length > 0 && un.length <= 3) {
+    createClusters(un, 3).forEach(c => writeCluster(c, bbuCounter++, mainSheet, mOutCol, mDistCol, PALETTE_COLORS));
+  } else if (un.length > 3) {
+    createClusters(un.filter(s => s.is5G), 6).forEach(c => writeCluster(c, bbuCounter++, mainSheet, mOutCol, mDistCol, PALETTE_COLORS));
+    createClusters(un.filter(s => !s.is5G), 3).forEach(c => writeCluster(c, bbuCounter++, mainSheet, mOutCol, mDistCol, PALETTE_COLORS));
+  }
+
+  function writeCluster(chunk, cIdx, sh, outCol, distCol, colArr) {
+    let url = ""; 
+    let clusterValid = true, maxD = 0;
+    
+    let isNodeValid = (n) => n.lat !== null && n.lng !== null;
+    chunk.forEach(s => { if (!isNodeValid(s)) clusterValid = false; });
+    
+    for (let i = 0; i < chunk.length; i++) {
+      for (let k = i + 1; k < chunk.length; k++) {
+        let d = getDist(chunk[i].lat, chunk[i].lng, chunk[k].lat, chunk[k].lng);
+        if (d !== 999999 && d > maxD) maxD = d;
+      }
+    }
+    
+    chunk.sort((a, b) => {
+      let timeA = (a.date && !isNaN(new Date(a.date).getTime())) ? new Date(a.date).getTime() : Infinity;
+      let timeB = (b.date && !isNaN(new Date(b.date).getTime())) ? new Date(b.date).getTime() : Infinity;
+      return timeA - timeB; 
+    });
+    
+    if (chunk.length === 1 && clusterValid) {
+      url = "https://www.google.com/maps/search/?api=1&query=" + chunk[0].lat + "," + chunk[0].lng;
+    } else if (clusterValid) {
+      url = "https://www.google.com/maps/dir/";
+      chunk.forEach(s => { if (s.lat) url += s.lat + "," + s.lng + "/"; });
+    }
+
+    let lockedNodeWithColor = chunk.find(s => s.isLockedCQ && String(s.sector).trim() !== "" && s.color && s.color !== '#ffffff');
+    let bg = lockedNodeWithColor ? lockedNodeWithColor.color : 
+             (chunk.find(s => String(s.sector).trim() === "1" && s.color && s.color !== '#ffffff')?.color || chunk.find(s => s.color && s.color !== '#ffffff')?.color || colArr[cIdx % colArr.length]);
+    
+    let used = [];
+    let maxCap = chunk[0].is5G ? 6 : 3;
+    if (chunk[0].bbu && String(chunk[0].bbu).startsWith("6651")) maxCap = chunk.length; 
+    let isFull = (chunk.length >= maxCap);
+    
+    // Explicitly lock the exact numbers of CQ nodes ONLY IF THEY HAVE A NUMBER
+    chunk.forEach(s => {
+      let secStr = String(s.sector).trim();
+      if (s.isLockedCQ && secStr !== "") {
+        used.push(secStr);
+      }
+    });
+    
+    chunk.forEach(s => {
+      let sec;
+      let cellBg = bg;
+      let secStr = String(s.sector).trim();
+      let trulyLocked = (s.isLockedCQ && secStr !== "");
+
+      if (trulyLocked) {
+        sec = secStr;
+        cellBg = (s.color && s.color !== '#ffffff') ? s.color : bg;
+      } else {
+        sec = 1;
+        while (used.includes(String(sec))) sec++;
+        used.push(String(sec));
+      }
+      
+      let cell = sh.getRange(s.row, outCol + 1);
+      cell.clearContent().clearFormat();
+      if (trulyLocked && s.savedFormula) cell.setFormula(s.savedFormula);
+      else if (clusterValid) cell.setFormula(`=HYPERLINK("${url}", "${sec}")`);
+      else cell.setValue(sec);
+
+      if (distCol !== -1) {
+        let dCell = sh.getRange(s.row, distCol + 1);
+        dCell.clearContent().clearFormat();
+
+        let nodeHasCoords = isNodeValid(s);
+
+        if (!nodeHasCoords) {
+          dCell.setValue("Missing Coords");
+          dCell.setBackground('#ff0000').setFontColor('#ffffff').setFontWeight('bold');
+        } else if (!clusterValid) {
+          dCell.setValue("Partner Missing Coords");
+          dCell.setBackground('#fce5cd').setFontColor('#cc0000').setFontWeight('bold');
+        } else {
+          let finalDist = chunk.length === 1 ? 0 : (maxD * 0.621371);
+          dCell.setValue(chunk.length === 1 ? "Standalone Node" : finalDist.toFixed(2));
+          if (finalDist > 11) {
+            dCell.setBackground('#ff0000').setFontColor('#ffffff').setFontWeight('bold');
+          } else {
+            dCell.setBackground('#ffffff').setFontColor('#000000').setFontWeight('normal');
+          }
+        }
+      }
+
+      let restoredBg = trulyLocked ? ((s.color && s.color !== '#ffffff') ? s.color : (s.savedBg && s.savedBg !== '#ffffff' ? s.savedBg : cellBg)) : cellBg;
+      cell.setBackground(restoredBg).setFontColor('#000000');
+      if (typeof mTechCol !== 'undefined' && mTechCol !== -1) {
+        let techCell = sh.getRange(s.row, mTechCol + 1);
+        if (isFull) techCell.setBackground(bg).setFontColor('#000000');
+        else techCell.setBackground('#ffffff').setFontColor('#000000');
+      }
+    });
+  }
+  ss.toast(`Success! Re-mapped ${sitesFound} nodes specifically for ${response.getResponseText()}.`);
+}
+
+/**
+ * Export Google Earth KML with Semi-Transparent Polygons
+ */
+function exportToGoogleEarth() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+
+  const dumpSheet = ss.getSheetByName("Daily Data Dump");
+  if (!dumpSheet) return;
+
+  const dumpRaw = dumpSheet.getRange(1, 1, 10, dumpSheet.getLastColumn()).getValues();
+  let dIdData = findCol(dumpRaw, "fuze", "id");
+  let dLatCol = findCol(dumpRaw, "latitude").col;
+  let dLngCol = findCol(dumpRaw, "longitude").col;
+
+  const dumpData = dumpSheet.getDataRange().getValues().slice(dIdData.row + 1);
+  let geoMap = {};
+  dumpData.forEach(row => {
+    let rawId = String(row[dIdData.col]).replace(/\D/g, "");
+    if (rawId && row[dLatCol] && row[dLngCol]) geoMap[rawId] = { lat: parseFloat(row[dLatCol]), lng: parseFloat(row[dLngCol]) };
+  });
+
+  const mainSheet = ss.getSheetByName("Site Detail");
+  const mainRaw = mainSheet.getRange(1, 1, 10, mainSheet.getLastColumn()).getValues();
+
+  let mIdData = findCol(mainRaw, "fuze", "id");
+  let mIdCol = mIdData.col; let mSiteCol = findCol(mainRaw, "site").col;
+  let mHubCol = findCol(mainRaw, "hub").col; let mTechCol = findCol(mainRaw, "tech").col;
+  let mBbuCol = findCol(mainRaw, "bbu").col; let mSecCol = findCol(mainRaw, "sector").col;
+  let mOutCol = findCol(mainRaw, "pairing").col; let mHeaderRow = mIdData.row;
+
+  const mainData = mainSheet.getDataRange().getValues().slice(mHeaderRow + 1);
+  const outputFormulas = mainSheet.getRange(mHeaderRow + 2, mOutCol + 1, mainData.length, 1).getFormulas();
+  const bgColors = mainSheet.getRange(mHeaderRow + 2, mOutCol + 1, mainData.length, 1).getBackgrounds();
+
+  let hubClusters = {};
+  let sitesExported = 0;
+  let uniqueColors = new Set();
+
+  function hexToKmlColor(hex) {
+    if (!hex || hex === '#ffffff' || hex === '#000000') return 'ff00ffff'; 
+    hex = hex.replace('#', '');
+    if (hex.length === 3) hex = hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
+    let r = hex.substring(0,2); let g = hex.substring(2,4); let b = hex.substring(4,6);
+    return 'ff' + b + g + r; 
+  }
+
+  for (let j = 0; j < mainData.length; j++) {
+    let hub = String(mainData[j][mHubCol]).trim().toUpperCase();
+    let tech = String(mainData[j][mTechCol]).toUpperCase().trim();
+    if (!hub || hub === "UNDEFINED" || tech === "") continue;
+
+    let cleanId = String(mainData[j][mIdCol]).replace(/\D/g, "");
+    let coords = geoMap[cleanId];
+    if (!coords) continue;
+
+    let bbuVal = String(mainData[j][mBbuCol]).trim().toUpperCase();
+    let formula = String(outputFormulas[j][0]);
+    let bgColor = bgColors[j][0];
+    
+    let isPrePaired = bbuVal !== "";
+    let urlMatch = formula.match(/HYPERLINK\("([^"]+)"/i);
+    let clusterId = isPrePaired ? "BBU_" + bbuVal : (urlMatch ? "URL_" + urlMatch[1] : "STANDALONE_" + j);
+
+    if (!hubClusters[hub]) hubClusters[hub] = {};
+    if (!hubClusters[hub][clusterId]) hubClusters[hub][clusterId] = { nodes: [], colorHex: bgColor, kmlColor: hexToKmlColor(bgColor) };
+
+    uniqueColors.add(bgColor);
+    hubClusters[hub][clusterId].nodes.push({
+      id: cleanId, name: mSiteCol !== -1 ? mainData[j][mSiteCol] : cleanId, tech: tech,
+      lat: coords.lat, lng: coords.lng,
+      bbu: bbuVal !== "" ? String(mainData[j][mBbuCol]).trim() : "Unassigned", 
+      sector: mSecCol !== -1 ? String(mainData[j][mSecCol]).trim() : ""
+    });
+    sitesExported++;
+  }
+
+  let kml = '<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n<name>BBU Network Map</name>\n';
+
+  uniqueColors.forEach(hex => {
+      let kColor = hexToKmlColor(hex);
+      kml += `  <Style id="style_${hex.replace('#','')}">\n`;
+      kml += `    <LineStyle>\n      <color>${kColor}</color>\n      <width>4</width>\n    </LineStyle>\n`;
+      kml += `    <PolyStyle>\n      <color>66${kColor.substring(2)}</color>\n    </PolyStyle>\n`;
+      kml += `    <IconStyle>\n      <color>${kColor}</color>\n      <scale>1.1</scale>\n      <Icon>\n        <href>http://maps.google.com/mapfiles/kml/paddle/wht-blank.png</href>\n      </Icon>\n    </IconStyle>\n`;
+      kml += `  </Style>\n`;
+  });
+
+  let sortedHubs = Object.keys(hubClusters).sort();
+  sortedHubs.forEach(hub => {
+    kml += `  <Folder>\n    <name><![CDATA[${hub}]]></name>\n`;
+    for (let cid in hubClusters[hub]) {
+        let cluster = hubClusters[hub][cid];
+        let styleRef = `#style_${cluster.colorHex.replace('#','')}`;
+
+        cluster.nodes.forEach(site => {
+          let description = `<b>Hub:</b> ${hub}<br><b>BBU:</b> ${site.bbu}<br><b>Sector:</b> ${site.sector}<br><b>Tech:</b> ${site.tech}<br><b>Fuze ID:</b> ${site.id}`;
+          kml += `    <Placemark>\n      <name><![CDATA[${site.name}]]></name>\n      <description><![CDATA[${description}]]></description>\n`;
+          kml += `      <styleUrl>${styleRef}</styleUrl>\n      <Point>\n        <coordinates>${site.lng},${site.lat},0</coordinates>\n      </Point>\n    </Placemark>\n`;
+        });
+
+        if (cluster.nodes.length > 2) {
+            kml += `    <Placemark>\n      <name>Coverage Area</name>\n      <styleUrl>${styleRef}</styleUrl>\n`;
+            kml += `      <Polygon>\n        <tessellate>1</tessellate>\n        <outerBoundaryIs>\n          <LinearRing>\n            <coordinates>\n`;
+            cluster.nodes.forEach(site => { kml += `              ${site.lng},${site.lat},0\n`; });
+            kml += `              ${cluster.nodes[0].lng},${cluster.nodes[0].lat},0\n`; 
+            kml += `            </coordinates>\n          </LinearRing>\n        </outerBoundaryIs>\n      </Polygon>\n    </Placemark>\n`;
+        } else if (cluster.nodes.length === 2) {
+            kml += `    <Placemark>\n      <name>Pairing Link</name>\n      <styleUrl>${styleRef}</styleUrl>\n`;
+            kml += `      <LineString>\n        <tessellate>1</tessellate>\n        <coordinates>\n`;
+            cluster.nodes.forEach(site => { kml += `          ${site.lng},${site.lat},0\n`; });
+            kml += `        </coordinates>\n      </LineString>\n    </Placemark>\n`;
+        }
+    }
+    kml += `  </Folder>\n`;
+  });
+  
+  kml += '</Document>\n</kml>';
+
+  let encodedKml = Utilities.base64Encode(kml);
+  let html = `<html><body style="font-family: sans-serif; text-align: center; padding-top: 10px;">
+    <p>If the download doesn't start automatically, click below:</p>
+    <a id="downloadBtn" href="data:application/vnd.google-earth.kml+xml;base64,${encodedKml}" download="BBU_Network_Map.kml" style="display:inline-block; padding:10px 15px; background:#0F9D58; color:white; text-decoration:none; border-radius:4px;">Download KML</a>
+    <script>document.getElementById('downloadBtn').click(); setTimeout(function() { google.script.host.close(); }, 2500);</script>
+  </body></html>`;
+  
+  SpreadsheetApp.getUi().showModalDialog(HtmlService.createHtmlOutput(html).setWidth(300).setHeight(150), `Exporting ${sitesExported} Nodes with Shading...`);
+}
+
+/**
+ * Calculates available open ports for a specific Hub.
+ */
+function calculateOpenPorts() {
+  const ui = SpreadsheetApp.getUi();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const mainSheet = ss.getSheetByName("Site Detail");
+  
+  if (!mainSheet) {
+    ui.alert("Error", "Could not find 'Site Detail' tab.", ui.ButtonSet.OK);
+    return;
+  }
+
+  const response = ui.prompt('Calculate Open Ports', 'Enter the exact Hub Name you want to tally:', ui.ButtonSet.OK_CANCEL);
+  if (response.getSelectedButton() !== ui.Button.OK) return; 
+  
+  const targetHub = response.getResponseText().trim().toLowerCase();
+  if (targetHub === "") return;
+
+  const mainRaw = mainSheet.getRange(1, 1, 10, mainSheet.getLastColumn()).getValues();
+  let mHubCol = -1, mTechCol = -1, mBbuCol = -1, mOutCol = -1, mSecCol = -1, headerRow = -1;
+
+  for (let r = 0; r < mainRaw.length; r++) {
+    let row = mainRaw[r].map(h => String(h).toLowerCase().trim());
+    let hubCheck = row.findIndex(h => h === "hub");
+    if (hubCheck > -1) {
+      mHubCol = hubCheck;
+      mTechCol = row.findIndex(h => h.includes("tech"));
+      mBbuCol = row.findIndex(h => h.includes("bbu"));
+      mOutCol = row.findIndex(h => h.includes("pairing"));
+      mSecCol = row.findIndex(h => h.includes("sector"));
+      headerRow = r;
+      break;
+    }
+  }
+
+  if (mHubCol === -1 || mOutCol === -1) {
+    ui.alert("Error", "Could not find required columns on Site Detail tab.", ui.ButtonSet.OK);
+    return;
+  }
+
+  const mainData = mainSheet.getDataRange().getValues().slice(headerRow + 1);
+  const outputFormulas = mainSheet.getRange(headerRow + 2, mOutCol + 1, mainData.length, 1).getFormulas();
+
+  let hubClusters = {};
+  let sitesFound = 0;
+
+  for (let j = 0; j < mainData.length; j++) {
+    let hubName = String(mainData[j][mHubCol]).trim().toLowerCase();
+    
+    if (hubName === targetHub) {
+      sitesFound++;
+      let tech = String(mainData[j][mTechCol]).toUpperCase().trim();
+      let bbuVal = String(mainData[j][mBbuCol]).trim();
+      let formula = String(outputFormulas[j][0]);
+      let sectorVal = (mSecCol !== -1) ? String(mainData[j][mSecCol]).trim() : "";
+      
+      let is5GOnly = tech.includes("5G") && !tech.includes("4G"); 
+      let isPrePaired = bbuVal !== ""; 
+      let isConfirmed = (sectorVal !== "");
+      
+      let clusterId = "";
+      let urlMatch = formula.match(/HYPERLINK\("([^"]+)"/i);
+      
+      if (isPrePaired) {
+        clusterId = "BBU_" + bbuVal; 
+      } else if (urlMatch) {
+        clusterId = "URL_" + urlMatch[1]; 
+      } else {
+        clusterId = "STANDALONE_" + j; 
+      }
+
+      if (!hubClusters[clusterId]) {
+        hubClusters[clusterId] = {
+          techType: is5GOnly ? '5G' : '4G/5G',
+          isPrePaired: isPrePaired,
+          confirmedPorts: 0
+        };
+      } else if (!is5GOnly) {
+        hubClusters[clusterId].techType = '4G/5G'; 
+      }
+      
+      if (isPrePaired) hubClusters[clusterId].isPrePaired = true;
+      if (isConfirmed) hubClusters[clusterId].confirmedPorts++;
+    }
+  }
+
+  if (sitesFound === 0) {
+    ui.alert("Not Found", `Could not find any sites for Hub: "${response.getResponseText()}"`, ui.ButtonSet.OK);
+    return;
+  }
+
+  let open4G = 0;
+  let open5G = 0;
+
+  for (let cid in hubClusters) {
+    let cluster = hubClusters[cid];
+    let isActiveBBU = cluster.isPrePaired || (cluster.confirmedPorts > 0);
+    
+    if (isActiveBBU) {
+      let maxCapacity = (cluster.techType === '5G') ? 6 : 3;
+      if (cid.startsWith("BBU_6651")) maxCapacity = cluster.confirmedPorts; 
+      
+      let openSlots = maxCapacity - cluster.confirmedPorts;
+      
+      if (openSlots > 0) {
+        if (cluster.techType === '5G') open5G += openSlots;
+        else open4G += openSlots;
+      }
+    }
+  }
+
+  let message = `4G/5G open ports = ${open4G}\n5G open ports = ${open5G}`;
+  ui.alert(`Open Ports Summary: ${response.getResponseText()}`, message, ui.ButtonSet.OK);
+}
+
+/**
+ * Scans entire Site Detail tab, generates full report on a new tab.
+ */
+function generateFullPortReport() {
+  const ui = SpreadsheetApp.getUi();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const mainSheet = ss.getSheetByName("Site Detail");
+  
+  if (!mainSheet) {
+    ui.alert("Error", "Could not find 'Site Detail' tab.", ui.ButtonSet.OK);
+    return;
+  }
+
+  const mainRaw = mainSheet.getRange(1, 1, 10, mainSheet.getLastColumn()).getValues();
+  let mHubCol = -1, mTechCol = -1, mBbuCol = -1, mOutCol = -1, mSecCol = -1, headerRow = -1;
+
+  for (let r = 0; r < mainRaw.length; r++) {
+    let row = mainRaw[r].map(h => String(h).toLowerCase().trim());
+    let hubCheck = row.findIndex(h => h === "hub");
+    if (hubCheck > -1) {
+      mHubCol = hubCheck;
+      mTechCol = row.findIndex(h => h.includes("tech"));
+      mBbuCol = row.findIndex(h => h.includes("bbu"));
+      mOutCol = row.findIndex(h => h.includes("pairing"));
+      mSecCol = row.findIndex(h => h.includes("sector"));
+      headerRow = r;
+      break;
+    }
+  }
+
+  if (mHubCol === -1 || mOutCol === -1) {
+    ui.alert("Error", "Could not find required columns on Site Detail tab.", ui.ButtonSet.OK);
+    return;
+  }
+
+  const mainData = mainSheet.getDataRange().getValues().slice(headerRow + 1);
+  const outputFormulas = mainSheet.getRange(headerRow + 2, mOutCol + 1, mainData.length, 1).getFormulas();
+
+  let hubData = {}; 
+
+  for (let j = 0; j < mainData.length; j++) {
+    let hubName = String(mainData[j][mHubCol]).trim().toUpperCase();
+    if (!hubName || hubName === "UNDEFINED") continue;
+    
+    let tech = String(mainData[j][mTechCol]).toUpperCase().trim();
+    let bbuVal = String(mainData[j][mBbuCol]).trim();
+    let formula = String(outputFormulas[j][0]);
+    let sectorVal = (mSecCol !== -1) ? String(mainData[j][mSecCol]).trim() : "";
+    
+    let is5GOnly = tech.includes("5G") && !tech.includes("4G"); 
+    let isPrePaired = bbuVal !== ""; 
+    let isConfirmed = (sectorVal !== "");
+    
+    let clusterId = "";
+    let urlMatch = formula.match(/HYPERLINK\("([^"]+)"/i);
+    
+    if (isPrePaired) {
+      clusterId = "BBU_" + bbuVal; 
+    } else if (urlMatch) {
+      clusterId = "URL_" + urlMatch[1]; 
+    } else {
+      clusterId = "STANDALONE_" + j; 
+    }
+
+    if (!hubData[hubName]) {
+      hubData[hubName] = { clusters: {} };
+    }
+
+    if (!hubData[hubName].clusters[clusterId]) {
+      hubData[hubName].clusters[clusterId] = {
+        techType: is5GOnly ? '5G' : '4G/5G',
+        isPrePaired: isPrePaired,
+        confirmedPorts: 0
+      };
+    } else if (!is5GOnly) {
+      hubData[hubName].clusters[clusterId].techType = '4G/5G'; 
+    }
+    
+    if (isPrePaired) hubData[hubName].clusters[clusterId].isPrePaired = true;
+    if (isConfirmed) hubData[hubName].clusters[clusterId].confirmedPorts++;
+  }
+
+  let reportRows = [];
+  let totalNetwork4G = 0;
+  let totalNetwork5G = 0;
+
+  for (let hub in hubData) {
+    let open4G = 0;
+    let open5G = 0;
+
+    for (let cid in hubData[hub].clusters) {
+      let cluster = hubData[hub].clusters[cid];
+      let isActiveBBU = cluster.isPrePaired || (cluster.confirmedPorts > 0);
+      
+      if (isActiveBBU) {
+        let maxCapacity = (cluster.techType === '5G') ? 6 : 3;
+        if (cid.startsWith("BBU_6651")) maxCapacity = cluster.confirmedPorts; 
+        
+        let openSlots = maxCapacity - cluster.confirmedPorts;
+        
+        if (openSlots > 0) {
+          if (cluster.techType === '5G') {
+            open5G += openSlots;
+            totalNetwork5G += openSlots;
+          } else {
+            open4G += openSlots;
+            totalNetwork4G += openSlots;
+          }
+        }
+      }
+    }
+    
+    if (open4G > 0 || open5G > 0) {
+      reportRows.push([hub, open4G, open5G, open4G + open5G]);
+    }
+  }
+
+  reportRows.sort((a, b) => a[0].localeCompare(b[0]));
+
+  const reportTabName = "Open Ports Report";
+  let reportSheet = ss.getSheetByName(reportTabName);
+  
+  if (!reportSheet) {
+    reportSheet = ss.insertSheet(reportTabName, 2); 
+  } else {
+    reportSheet.clear(); 
+  }
+
+  ss.setActiveSheet(reportSheet);
+  ss.moveActiveSheet(3); 
+
+  const headers = [["Hub Name", "4G/5G Open Ports", "5G Open Ports", "Total Open Ports"]];
+  reportSheet.getRange(1, 1, 1, 4).setValues(headers)
+    .setFontWeight("bold")
+    .setBackground("#d9ead3") 
+    .setBorder(true, true, true, true, null, null);
+
+  if (reportRows.length > 0) {
+    reportSheet.getRange(2, 1, reportRows.length, 4).setValues(reportRows);
+    
+    let lastRow = reportRows.length + 2;
+    reportSheet.getRange(lastRow, 1, 1, 4).setValues([["NETWORK TOTALS", totalNetwork4G, totalNetwork5G, totalNetwork4G + totalNetwork5G]])
+      .setFontWeight("bold")
+      .setBackground("#cfe2f3") 
+      .setBorder(true, true, true, true, null, null);
+  } else {
+    reportSheet.getRange(2, 1).setValue("No open ports found on the network.");
+  }
+
+  reportSheet.autoResizeColumns(1, 4);
+  reportSheet.setFrozenRows(1);
+  
+  ss.toast("Port calculation complete!");
+}
+
+/**
+ * Updates Node Activation dates and highlights Site Names based on milestone priority.
+ */
+function masterSiteUpdateAndHighlight() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var siteDetailSheet = ss.getSheetByName("Site Detail");
+  var dataDumpSheet = ss.getSheetByName("Daily Data Dump");
+  
+  if (!siteDetailSheet || !dataDumpSheet) {
+    SpreadsheetApp.getUi().alert("Sheets not found. Please verify 'Site Detail' and 'Daily Data Dump'.");
+    return;
+  }
+
+  var dumpLastRow = dataDumpSheet.getLastRow();
+  var dumpLastCol = dataDumpSheet.getLastColumn();
+  if (dumpLastRow < 3) return; 
+  
+  var dumpData = dataDumpSheet.getRange(1, 1, dumpLastRow, dumpLastCol).getValues();
+  var dumpHeaders = dumpData[1]; 
+  
+  var dumpFuzeCol = -1, dumpActivationCol = -1, dumpIntegrationCol = -1, dumpBbReadyCol = -1;
+  
+  for (var h = 0; h < dumpHeaders.length; h++) {
+    var cleanHeader = dumpHeaders[h].toString().toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (cleanHeader === "fuzeprojectid") dumpFuzeCol = h;
+    if (cleanHeader === "inserviceactivationa") dumpActivationCol = h;
+    if (cleanHeader === "bbintegrationcompleteda") dumpIntegrationCol = h;
+    if (cleanHeader === "bbintegrationreadya") dumpBbReadyCol = h; 
+  }
+
+  if (dumpFuzeCol === -1 || dumpActivationCol === -1 || dumpIntegrationCol === -1 || dumpBbReadyCol === -1) {
+    SpreadsheetApp.getUi().alert("Error: Missing one of the required target columns in the Daily Data Dump.");
+    return;
+  }
+
+  var projectMap = {};
+  for (var r = 2; r < dumpData.length; r++) {
+    var fuzeId = dumpData[r][dumpFuzeCol].toString().replace(/[^a-zA-Z0-9]/g, '');
+    if (!fuzeId) continue;
+
+    var actVal = dumpData[r][dumpActivationCol];
+    var intVal = dumpData[r][dumpIntegrationCol];
+    var bbReadyVal = dumpData[r][dumpBbReadyCol]; 
+
+    var mappedData = { activationDate: "", isIntegrated: false, isBbReady: false };
+
+    if (actVal !== "" && actVal != null) {
+      if (actVal instanceof Date) {
+        mappedData.activationDate = Utilities.formatDate(actVal, Session.getScriptTimeZone(), "MM-dd-yyyy");
+      } else {
+        var parsedDate = new Date(actVal);
+        if (!isNaN(parsedDate.getTime())) {
+          mappedData.activationDate = Utilities.formatDate(parsedDate, Session.getScriptTimeZone(), "MM-dd-yyyy");
+        } else {
+          mappedData.activationDate = actVal.toString().trim();
+        }
+      }
+    }
+
+    if (intVal instanceof Date && intVal.getFullYear() > 2000) mappedData.isIntegrated = true;
+    if (bbReadyVal !== "" && bbReadyVal != null) mappedData.isBbReady = true; 
+
+    projectMap[fuzeId] = mappedData;
+  }
+
+  var siteData = siteDetailSheet.getDataRange().getValues();
+  var siteHeaders = siteData[0]; 
+  
+  var siteFuzeCol = -1, nodeActiveCol = -1, siteNameCol = -1; 
+  for (var i = 0; i < siteHeaders.length; i++) {
+    var cleanSiteHeader = siteHeaders[i].toString().toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (cleanSiteHeader === "fuzeprojectid") siteFuzeCol = i;
+    if (cleanSiteHeader === "nodeactivated") nodeActiveCol = i;
+    if (cleanSiteHeader === "sitename") siteNameCol = i; 
+  }
+  
+  if (siteFuzeCol === -1 || nodeActiveCol === -1 || siteNameCol === -1) {
+    SpreadsheetApp.getUi().alert("Missing a required column in the Site Detail tab.");
+    return;
+  }
+
+  var dateOutputValues = [];
+  var siteNameRange = siteDetailSheet.getRange(2, siteNameCol + 1, siteData.length - 1, 1);
+  var backgrounds = siteNameRange.getBackgrounds();
+  var changesMade = false;
+  
+  var actColor = "#36ab1f"; 
+  var intColor = "#93c47d"; 
+  var bbReadyColor  = "#f4cccc"; 
+
+  for (var j = 1; j < siteData.length; j++) {
+    var siteFuzeId = siteData[j][siteFuzeCol].toString().replace(/[^a-zA-Z0-9]/g, '');
+    var currentBg = backgrounds[j-1][0]; 
+    
+    if (siteFuzeId !== "" && projectMap.hasOwnProperty(siteFuzeId)) {
+      var projInfo = projectMap[siteFuzeId];
+      
+      if (projInfo.activationDate) dateOutputValues.push([projInfo.activationDate]);
+      else dateOutputValues.push([""]); 
+
+      var newBg = currentBg;
+      if (projInfo.activationDate) newBg = actColor;
+      else if (projInfo.isIntegrated) newBg = intColor;
+      else if (projInfo.isBbReady) newBg = bbReadyColor; 
+
+      if (newBg !== currentBg) {
+        backgrounds[j-1][0] = newBg;
+        changesMade = true;
+      }
+    } else {
+      dateOutputValues.push([""]); 
+    }
+  }
+
+  if (dateOutputValues.length > 0) siteDetailSheet.getRange(2, nodeActiveCol + 1, dateOutputValues.length, 1).setValues(dateOutputValues);
+  if (changesMade) siteNameRange.setBackgrounds(backgrounds);
+  
+  SpreadsheetApp.getActiveSpreadsheet().toast("Site Update & Highlight Complete!");
+}
+
+function openBBUClusterMap() {
+  const webAppUrl = "https://script.google.com/a/macros/verizonwireless.com/s/AKfycbwiQPAlAZY6rWrF3q-KiBL00mIaNO5nZeYBVpp2GJxg8Wk3b8cVHVKhtEFwH0BgwlxRtA/exec";
+  const html = `<html><body style="font-family: sans-serif; text-align: center; padding-top: 20px;">
+    <p>Click the button below to open the Live BBU Cluster Map in a new tab.</p>
+    <a href="${webAppUrl}" target="_blank" style="display:inline-block; padding:10px 20px; background-color:#d52b1e; color:white; text-decoration:none; font-weight:bold; border-radius:4px;">Open Live Map</a>
+    <script>setTimeout(function() { google.script.host.close(); }, 3000);</script>
+  </body></html>`;
+  SpreadsheetApp.getUi().showModalDialog(HtmlService.createHtmlOutput(html).setWidth(350).setHeight(150), 'Open BBU Map');
+}
+
+// =========================================================================
+// !!! PASTE YOUR CUSTOM HANDOFF FUNCTIONS BELOW THIS LINE !!!
+// =========================================================================

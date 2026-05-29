@@ -26,7 +26,7 @@ async function submitEO(eoPage: Page) {
   await eoPage.getByRole('button', { name: 'Submit' }).click();
 }
 
-test('Clone and submit EOs', async ({ page }) => {
+test('Clone and submit EOs - DWDM', async ({ page }) => {
   test.setTimeout(180000); // 3 minutes — SSO redirect can be slow
 
   if (SPM_IDS.some((id) => !id)) {

@@ -3,7 +3,13 @@
   "version": "1.0.0",
   "description": "This repository contains the Google Apps Script source files for the BBU Tracker, managed with [clasp](https://github.com/google/clasp).",
   "main": "CQ status.js",
-  "scripts": {},
+  "scripts": {
+    "order": "node EOLauncher.js",
+    "order:dwdm": "node EOLauncher.js DWDM",
+    "order:ericsson-v1": "node EOLauncher.js \"Ericsson V1 SFP\"",
+    "order:ericsson-v2": "node EOLauncher.js \"Ericsson V2 SFP\"",
+    "order:prolabs-v1": "node EOLauncher.js \"ProLabs V1 SFP\""
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/seanmcgrath1-design/bbu-tracker.git"
