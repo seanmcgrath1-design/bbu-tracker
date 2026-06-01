@@ -195,14 +195,10 @@ function generateHandoffDrafts() {
 
       htmlBody += "</table><br><p><strong>[PASTE RACK LAYOUT SCREENSHOT HERE]</strong></p></div>";
 
-      GmailApp.createDraft("Ronan.Tito@parsons.com, ron.doering@ericsson.com, frantz.khan@ericsson.com, narendra.singh.bist.bist@ericsson.com, carlos.javier.rios.castrejon@ericsson.com", subject, '', {
-        htmlBody: htmlBody,
-        cc: "enis.orahovac@verizonwireless.com, matt.dubowski@verizonwireless.com, sean.mcgrath1@verizonwireless.com"
+      GmailApp.createDraft("Ronan.Tito@parsons.com, ron.doering@ericsson.com, frantz.khan@ericsson.com, narendra.singh.bist.bist@ericsson.com, carlos.javier.rios.castrejon@ericsson.com", subject, '', { 
+        htmlBody: htmlBody, 
+        cc: "enis.orahovac@verizonwireless.com, matt.dubowski@verizonwireless.com, sean.mcgrath1@verizonwireless.com" 
       });
-
-      // Log any RTN/EO numbers to PO Tracking sheet
-      var hubSiteValue = (colHubSite !== -1 && processedGroup[0].data[colHubSite] !== "") ? processedGroup[0].data[colHubSite] : "Data Missing";
-      logToPoTracking(ss, today, processedGroup, hubSiteValue, colNodeName, colPO, activeNames, subject);
 
       // Site Detail Update Memory
       processedGroup.forEach(function(p) {
@@ -232,68 +228,5 @@ function generateHandoffDrafts() {
     }
   } catch (e) {
     // Safely catches the error and does nothing if the script is running automatically
-  }
-}
-
-function logToPoTracking(ss, today, processedGroup, hubSite, colNodeName, colPO, activeNames, subject) {
-  var trackingSheet = ss.getSheetByName("PO Tracking");
-  if (!trackingSheet) {
-    trackingSheet = ss.insertSheet("PO Tracking");
-    var header = ["Date Created", "Hub Site", "All Active Sites", "Site (PO Ref)", "RTN/EO", "Email Subject", "PO #", "Amount", "PO Type", "Status"];
-    trackingSheet.appendRow(header);
-    trackingSheet.getRange(1, 1, 1, header.length)
-      .setBackground("#4f81bd")
-      .setFontColor("#ffffff")
-      .setFontWeight("bold");
-    trackingSheet.setFrozenRows(1);
-  }
-
-  var addedSiteNames = [];
-
-  processedGroup.forEach(function(p) {
-    if (!p.ready) return;
-    var poVal = String(p.data[colPO] || "").trim();
-    var sNumbers = poVal.match(/S\d+/gi);
-    if (!sNumbers) return;
-
-    var siteName = String(p.data[colNodeName] || "").trim();
-    // Deduplicate S-numbers within the same cell (e.g. "S000735590, S000735592 (DWDM)")
-    var seen = {};
-    sNumbers.forEach(function(sNum) {
-      if (seen[sNum]) return;
-      seen[sNum] = true;
-      trackingSheet.appendRow([
-        today,
-        hubSite,
-        activeNames,
-        siteName,
-        sNum,
-        subject,
-        "",
-        "",
-        "",
-        "Pending"
-      ]);
-    });
-
-    if (siteName) addedSiteNames.push(siteName);
-  });
-
-  // Update PO Triggers to "PO Requested" for any site now logged to PO Tracking
-  if (addedSiteNames.length > 0) {
-    var triggersSheet = ss.getSheetByName("PO Triggers");
-    if (triggersSheet) {
-      var triggersData = triggersSheet.getDataRange().getValues();
-      for (var i = 1; i < triggersData.length; i++) {
-        if (String(triggersData[i][4]).trim() !== "Awaiting PO Request") continue;
-        var activeSites = String(triggersData[i][2]);
-        for (var j = 0; j < addedSiteNames.length; j++) {
-          if (activeSites.indexOf(addedSiteNames[j]) !== -1) {
-            triggersSheet.getRange(i + 1, 5).setValue("PO Requested");
-            break;
-          }
-        }
-      }
-    }
   }
 }

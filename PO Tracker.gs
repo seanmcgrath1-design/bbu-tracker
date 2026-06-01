@@ -97,20 +97,16 @@ function checkSentHandoffs(ss) {
   if (!triggersSheet) return 0;
 
   var data = triggersSheet.getDataRange().getValues();
-  var COL_SITES = 2, COL_STATUS = 4;
+  var COL_SUBJECT = 3, COL_STATUS = 4;
   var updated = 0;
 
   for (var i = 1; i < data.length; i++) {
     if (String(data[i][COL_STATUS]).trim() !== "Awaiting PO Request") continue;
 
-    var activeSites = String(data[i][COL_SITES]).trim();
-    if (!activeSites) continue;
+    var subject = String(data[i][COL_SUBJECT]).trim();
+    if (!subject) continue;
 
-    // Use the first site name as the search anchor
-    var firstSite = activeSites.split(/\s*&\s*/)[0].trim();
-    if (!firstSite) continue;
-
-    var threads = GmailApp.search('in:sent subject:"Ready for" "' + firstSite + '"');
+    var threads = GmailApp.search('in:sent subject:"' + subject + '"');
     if (threads.length > 0) {
       var sentDate = threads[0].getMessages()[0].getDate();
       var sentDateStr = Utilities.formatDate(sentDate, Session.getScriptTimeZone(), "M/d/yyyy");

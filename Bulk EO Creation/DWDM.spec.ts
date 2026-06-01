@@ -112,6 +112,13 @@ test('Clone and submit EOs - DWDM', async ({ page }) => {
     await submitEO(eoPage);
   }
 
-  // Keep browser open so you can review the created EOs — click Resume in the Inspector to close
-  await page1.pause();
+  // --- Collect and log all created EO IDs ---
+  const eoIds = await Promise.all(
+    eoLinks.map(async link => (await link.textContent() ?? '').trim().replace(/;$/, ''))
+  );
+
+  console.log(`\n${'='.repeat(40)}`);
+  console.log(`  Created ${eoIds.length} EO(s):`);
+  eoIds.forEach(id => console.log(`    ${id}`));
+  console.log(`${'='.repeat(40)}\n`);
 });

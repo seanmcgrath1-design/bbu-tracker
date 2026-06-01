@@ -198,7 +198,7 @@ function backfillEONotificationsChunked() {
   var today = new Date();
   var tz = Session.getScriptTimeZone();
   var rowsAdded = 0;
-  var chunkDays = 60;
+  var chunkDays = 7;
   var maxDays = 180;
 
   for (var start = 0; start < maxDays; start += chunkDays) {
@@ -359,6 +359,96 @@ function debugEOEmailParsing() {
   console.log(output);
   try {
     SpreadsheetApp.getUi().alert("EO Debug", output, SpreadsheetApp.getUi().ButtonSet.OK);
+  } catch(e) {}
+}
+
+// Debug: checks a specific EO# — whether it's in the sheet, and whether any emails mention it
+function debugSpecificEO() {
+  var TARGET_EO = "E000224137";
+  var results = [];
+  var ss = getEOSpreadsheet();
+  var eoSheet = ss.getSheetByName("EO's");
+
+  // 1. Check EO's tab
+  if (eoSheet) {
+    var eoData = eoSheet.getDataRange().getValues();
+    var found = false;
+    for (var i = 1; i < eoData.length; i++) {
+      if (String(eoData[i][1]).trim() === TARGET_EO) {
+        results.push("✅ Found in EO's tab — row " + (i + 1) + ", Receiving EO#: " + (eoData[i][2] || "(empty)"));
+        found = true;
+        break;
+      }
+    }
+    if (!found) results.push("❌ " + TARGET_EO + " is NOT in the EO's tab.");
+  } else {
+    results.push("❌ EO's tab not found.");
+  }
+
+  // 2. Search Gmail for any email with this EO# in subject
+  var subjectThreads = GmailApp.search('subject:"' + TARGET_EO + '"');
+  results.push("\nGmail subject search (" + TARGET_EO + "): " + subjectThreads.length + " thread(s)");
+  subjectThreads.forEach(function(t) {
+    t.getMessages().forEach(function(m) {
+      results.push("  📧 " + Utilities.formatDate(m.getDate(), Session.getScriptTimeZone(), "MM/dd/yyyy") + " — " + m.getSubject());
+    });
+  });
+
+  // 3. Search P2P emails for this EO# in body (older than 90d might be the issue)
+  var p2pOld = GmailApp.search('from:donotreply@verizon.com subject:"Project to Project Transfer" ' + TARGET_EO + ' newer_than:365d');
+  results.push("\nP2P body search (365d): " + p2pOld.length + " thread(s)");
+  p2pOld.forEach(function(t) {
+    t.getMessages().forEach(function(m) {
+      var body = m.getPlainBody();
+      var allEOs = body.match(/E\d{9}/g) || [];
+      var uniqueEOs = [];
+      allEOs.forEach(function(e) { if (uniqueEOs.indexOf(e) === -1) uniqueEOs.push(e); });
+      results.push("  📧 " + Utilities.formatDate(m.getDate(), Session.getScriptTimeZone(), "MM/dd/yyyy") +
+                   " — EOs found: " + uniqueEOs.join(", "));
+    });
+  });
+
+  var output = results.join("\n");
+  console.log(output);
+  try {
+    SpreadsheetApp.getUi().alert("Debug: " + TARGET_EO, output, SpreadsheetApp.getUi().ButtonSet.OK);
+  } catch(e) {}
+}
+
+// Debug: tests the exact date-windowed search that the backfill uses for a specific window
+function debugBackfillWindow() {
+  var results = [];
+  var tz = Session.getScriptTimeZone();
+
+  // Wide window around E000224137's email (02/04/2026) to rule out boundary issues
+  var testFrom = "2026/01/15";
+  var testTo   = "2026/03/01";
+
+  var query = 'from:donotreply@verizon.com subject:"unefi request" after:' + testFrom + ' before:' + testTo;
+  results.push("Query: " + query);
+
+  var threads = GmailApp.search(query);
+  results.push("Threads found: " + threads.length);
+
+  var foundTarget = false;
+  threads.forEach(function(thread) {
+    thread.getMessages().forEach(function(msg) {
+      var subj = msg.getSubject();
+      if (subj.toLowerCase().indexOf('unefi request') === -1) return;
+      var eoMatch = subj.match(/E\d{9}/);
+      var eo = eoMatch ? eoMatch[0] : "(no EO#)";
+      var dateStr = Utilities.formatDate(msg.getDate(), tz, "MM/dd/yyyy");
+      results.push("  " + dateStr + " — " + eo + " — " + subj.substring(0, 60));
+      if (eo === "E000224137") foundTarget = true;
+    });
+  });
+
+  results.push(foundTarget ? "\n✅ E000224137 FOUND in window." : "\n❌ E000224137 NOT found — backfill can never catch it via date search.");
+
+  var output = results.join("\n");
+  console.log(output);
+  try {
+    SpreadsheetApp.getUi().alert("Backfill Window Debug", output, SpreadsheetApp.getUi().ButtonSet.OK);
   } catch(e) {}
 }
 
