@@ -8,7 +8,8 @@
     "order:dwdm": "node EOLauncher.js DWDM",
     "order:ericsson-v1": "node EOLauncher.js \"Ericsson V1 SFP\"",
     "order:ericsson-v2": "node EOLauncher.js \"Ericsson V2 SFP\"",
-    "order:prolabs-v1": "node EOLauncher.js \"ProLabs V1 SFP\""
+    "order:prolabs-v1": "node EOLauncher.js \"ProLabs V1 SFP\"",
+    "shelter-bom": "node \"Bulk EO Creation/run-shelter-bom.js\""
   },
   "repository": {
     "type": "git",

@@ -1,7 +1,6 @@
 import { test } from '@playwright/test';
 
 const PROJECT_ID = process.env.FUZE_PROJECT_ID ?? '';
-const TARGET_DATE = process.env.FORECAST_DATE ?? '';
 
 // Suppress Chrome's "wants to access other devices on your local network" prompt
 test.use({
@@ -17,9 +16,12 @@ test.use({
 test('Shelter BOM', async ({ page }) => {
   test.setTimeout(180000);
 
-  if (!PROJECT_ID || !TARGET_DATE) {
-    throw new Error('Missing project ID or forecast date — run via: node "Bulk EO Creation/run-shelter-bom.js"');
+  if (!PROJECT_ID) {
+    throw new Error('Missing project ID — run via: npm run shelter-bom');
   }
+
+  // FORECAST_DATE env is an optional manual override; if empty, auto-calculated after login
+  let TARGET_DATE = process.env.FORECAST_DATE ?? '';
 
   // --- Login ---
   await page.goto(`https://fuze.verizon.com/spm/projects.jsp?projectId=${PROJECT_ID}`);
@@ -32,6 +34,40 @@ test('Shelter BOM', async ({ page }) => {
   await page.waitForLoadState('networkidle');
   await page.goto(`https://fuze.verizon.com/spm/projects.jsp?projectId=${PROJECT_ID}`);
   await page.waitForLoadState('networkidle');
+
+  // Auto-calculate forecast date by reading Construction Milestone (F) from the project page
+  if (!TARGET_DATE) {
+    const constBtn = page.getByRole('button', { name: /Construction Milestone/ })
+      .filter({ hasNotText: /Regulatory/ })
+      .first();
+    await constBtn.waitFor({ timeout: 15000 });
+    const milestoneText = await constBtn.textContent() ?? '';
+
+    // Button text format: "Construction Milestone  {STATUS} S {date} F {date} A {date}"
+    const fMatch = milestoneText.match(/\bF\s+(\d{2}\/\d{2}\/\d{4})/);
+    if (!fMatch) {
+      throw new Error(
+        'Construction Start (F) date not found on project page — the milestone may not have a forecast date set.\n' +
+        'Override: $env:FORECAST_DATE="MM/DD/YYYY"; npm run shelter-bom'
+      );
+    }
+
+    const [cm, cd, cy] = fMatch[1].split('/').map(Number);
+    const constStart = new Date(cy, cm - 1, cd);
+    const forecast = new Date(constStart.getTime() - 30 * 86400000);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    if (forecast < today) {
+      throw new Error(
+        `Construction Start is ${fMatch[1]} — forecast date is in the past.\n` +
+        'Override: $env:FORECAST_DATE="MM/DD/YYYY"; npm run shelter-bom'
+      );
+    }
+
+    const mm = String(forecast.getMonth() + 1).padStart(2, '0');
+    const dd = String(forecast.getDate()).padStart(2, '0');
+    TARGET_DATE = `${mm}/${dd}/${forecast.getFullYear()}`;
+    console.log(`  Construction Start (F): ${fMatch[1]}, Forecast Date: ${TARGET_DATE}`);
+  }
 
   // Set up PNA interceptor AFTER login so it doesn't interfere with the SSO flow
   await page.route('**/*', async (route) => {
