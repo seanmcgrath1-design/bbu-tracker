@@ -3,9 +3,6 @@ import { test, Page } from '@playwright/test';
 const PROJECT_NUM = process.env.PROJECT_NUM ?? '';
 const DUE_DATE    = process.env.DUE_DATE    ?? '';  // MM/DD/YYYY
 
-// Navigates the SAP calendar picker to the correct month and clicks the day.
-// The picker opens showing the current month, so we advance by however many
-// months lie between today and the target date.
 async function pickDate(page: Page, mmddyyyy: string) {
   const [month, day, year] = mmddyyyy.split('/').map(Number);
   const target  = new Date(year, month - 1, 1);
@@ -23,11 +20,11 @@ async function pickDate(page: Page, mmddyyyy: string) {
   await page.getByText(String(day), { exact: true }).first().click();
 }
 
-test('Create Service PO — 4G/5G 2 Sector', async ({ page }) => {
+test('Create Service PO — 1 Sector DWDM', async ({ page }) => {
   test.setTimeout(180000);
 
-  if (!PROJECT_NUM) throw new Error('Missing PROJECT_NUM — run via: node playwright-tests/run-service-po-4g5g-2sector.js');
-  if (!DUE_DATE)    throw new Error('Missing DUE_DATE — run via: node playwright-tests/run-service-po-4g5g-2sector.js');
+  if (!PROJECT_NUM) throw new Error('Missing PROJECT_NUM — run via: npm run 1sector-dwdm');
+  if (!DUE_DATE)    throw new Error('Missing DUE_DATE — run via: npm run 1sector-dwdm');
 
   // --- Login ---
   await page.goto('https://vz1erpwp1.verizon.com/sap/bc/ui5_ui5/sap/zmim_ord_dash/index.html?sap-theme=custom_horizon@/sap/public/bc/themes/~client-400&sap-client=400#');
@@ -71,9 +68,9 @@ test('Create Service PO — 4G/5G 2 Sector', async ({ page }) => {
   await page.locator('[id="__xmlview2--idPOTabSelSPM-rowsel0"]').click();
   await page.getByRole('button', { name: 'Start Order(All)' }).click();
 
-  // --- Load 4G/5G 2 Sector template ---
+  // --- Load 1 Sector DWDM template ---
   await page.getByText('Templates').click();
-  await page.getByRole('row').filter({ hasText: /E\/\/\/ Install.*4G\/5G.*2 Sector/ })
+  await page.getByRole('row').filter({ hasText: /E\/\/\/ Install.*5G.*1 sector.*DWDM/i })
     .locator('button[id*="idEditTempBtn"]')
     .click();
 
@@ -99,7 +96,6 @@ test('Create Service PO — 4G/5G 2 Sector', async ({ page }) => {
 
   // --- Capture Order ID ---
   await page.waitForLoadState('networkidle');
-  // Order ID format: letter + 9 digits, e.g. S000755208
   const orderLink = page.getByRole('link', { name: /^[A-Z]\d{9}$/ }).first();
   const orderText = page.getByText(/[A-Z]\d{9}/).first();
 

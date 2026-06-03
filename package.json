@@ -9,7 +9,10 @@
     "order:ericsson-v1": "node EOLauncher.js \"Ericsson V1 SFP\"",
     "order:ericsson-v2": "node EOLauncher.js \"Ericsson V2 SFP\"",
     "order:prolabs-v1": "node EOLauncher.js \"ProLabs V1 SFP\"",
-    "shelter-bom": "node \"Bulk EO Creation/run-shelter-bom.js\""
+    "shelter-bom": "node \"Bulk EO Creation/run-shelter-bom.js\"",
+    "service-po-4g5g-2sector": "node \"playwright PO's/run-service-po-4g5g-2sector.js\"",
+    "dwdm-only": "node \"playwright PO's/run-dwdm-only.js\"",
+    "1sector-dwdm": "node \"playwright PO's/run-1sector-dwdm.js\""
   },
   "repository": {
     "type": "git",

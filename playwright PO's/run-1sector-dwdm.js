@@ -1,6 +1,6 @@
-// run-dwdm-only.js
-// Service PO — DWDM Only
-// Usage: node "playwright PO's/run-dwdm-only.js"
+// run-1sector-dwdm.js
+// Service PO — 1 Sector DWDM
+// Usage: npm run 1sector-dwdm
 
 const readline = require('readline');
 const { spawn } = require('child_process');
@@ -45,7 +45,7 @@ async function prompt(question) {
 }
 
 async function main() {
-  console.log('\n=== Service PO — DWDM Only ===\n');
+  console.log('\n=== Service PO — 1 Sector DWDM ===\n');
 
   const password   = await promptPassword('Verizon Password: ');
   const projectNum = await prompt('Project Number: ');
@@ -63,7 +63,7 @@ async function main() {
 
   const child = spawn(
     'npx',
-    ['playwright', 'test', 'dwdm-only.spec.ts', '--headed', '--project=chromium'],
+    ['playwright', 'test', '1sector-dwdm.spec.ts', '--headed', '--project=chromium'],
     { env, stdio: 'inherit', shell: true, cwd: path.join(__dirname, '..') }
   );
 

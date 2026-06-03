@@ -41,7 +41,22 @@ test('Create Service PO — DWDM Only', async ({ page }) => {
   // --- Search for project ---
   await page.getByRole('searchbox', { name: 'Search SPM ID, Site ID, Site' }).fill(PROJECT_NUM);
   await page.getByRole('button', { name: 'Go' }).click();
-  await page.getByRole('gridcell', { name: 'Click to Select' }).first().click();
+  // The SAP grid splits SPM ID cells and "Click to Select" cells into separate DOM containers,
+  // so we find the index of the matching SPM ID among non-empty rows and click the nth selector.
+  const spmCells = page.getByRole('gridcell', { name: 'SPM ID Fixed Column' });
+  await spmCells.first().waitFor({ timeout: 15000 });
+  const cellCount = await spmCells.count();
+  let clickIndex = 0;
+  let nonEmptyIdx = 0;
+  let found = false;
+  for (let i = 0; i < cellCount; i++) {
+    const text = (await spmCells.nth(i).textContent() ?? '').trim();
+    if (!text) continue;
+    if (text === PROJECT_NUM) { clickIndex = nonEmptyIdx; found = true; break; }
+    nonEmptyIdx++;
+  }
+  if (!found) throw new Error(`SPM ID ${PROJECT_NUM} not found in search results`);
+  await page.getByRole('gridcell', { name: 'Click to Select' }).nth(clickIndex).click();
   await page.getByRole('button', { name: 'Save Selection to Start Order' }).click();
 
   // --- Select SPM row ---

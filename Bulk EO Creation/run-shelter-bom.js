@@ -1,5 +1,5 @@
 // run-shelter-bom.js
-// Shelter BOM — generates and downloads the RFDS BOM for a Fuze project
+// Shelter BOM — generates and downloads the RFDS BOM for one or more Fuze projects
 // Usage: npm run shelter-bom
 
 const readline = require('readline');
@@ -14,15 +14,15 @@ function promptPassword(prompt) {
     process.stdin.setEncoding('utf8');
     let password = '';
     process.stdin.on('data', function handler(char) {
-      if (char === '\r' || char === '\n' || char === '') {
+      if (char === '\r' || char === '\n' || char === '\x04') {
         process.stdin.setRawMode(false);
         process.stdin.pause();
         process.stdin.removeListener('data', handler);
         process.stdout.write('\n');
         resolve(password);
-      } else if (char === '') {
+      } else if (char === '\x03') {
         process.exit();
-      } else if (char === '' || char === '\b') {
+      } else if (char === '\x7f' || char === '\x08') {
         if (password.length > 0) {
           password = password.slice(0, -1);
           process.stdout.clearLine(0);
@@ -37,49 +37,75 @@ function promptPassword(prompt) {
   });
 }
 
+function runProject(projectId, password) {
+  return new Promise((resolve) => {
+    const env = {
+      ...process.env,
+      VZ_PASSWORD: password,
+      FUZE_PROJECT_ID: projectId,
+      // FORECAST_DATE only set if provided as env override; otherwise the spec reads it from the page
+      ...(process.env.FORECAST_DATE ? { FORECAST_DATE: process.env.FORECAST_DATE } : {}),
+    };
+
+    const child = spawn('npx', ['playwright', 'test', '--grep', 'Shelter BOM', '--headed', '--project=chromium'], {
+      env,
+      stdio: 'inherit',
+      shell: true,
+      cwd: path.join(__dirname, '..'),
+    });
+
+    child.on('exit', (code) => resolve(code ?? 0));
+  });
+}
+
 async function main() {
   console.log('\n=== Shelter BOM Tool ===\n');
 
   const password = await promptPassword('Verizon Password: ');
 
-  const rl2 = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const projectId = await new Promise((resolve) => rl2.question('\nFuze Project Number: ', resolve));
-  rl2.close();
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const input = await new Promise((resolve) =>
+    rl.question('\nFuze Project Numbers (up to 5, comma-separated): ', resolve)
+  );
+  rl.close();
 
-  if (!projectId.trim()) {
-    console.error('\nNo project ID provided. Please try again.\n');
+  // Parse: split on commas/spaces, strip blanks, deduplicate, cap at 5
+  const projectIds = [...new Set(
+    input.split(/[\s,]+/).map(s => s.trim()).filter(Boolean)
+  )].slice(0, 5);
+
+  if (projectIds.length === 0) {
+    console.error('\nNo project IDs provided. Please try again.\n');
     process.exit(1);
   }
 
-  const rl3 = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const dateInput = await new Promise((resolve) => rl3.question('\nForecast Date (MM/DD/YYYY, or Enter to auto-calculate): ', resolve));
-  rl3.close();
-  const forecastDate = dateInput.trim();
+  console.log(`\nProjects to process (${projectIds.length}): ${projectIds.join(', ')}\n`);
 
-  if (forecastDate) {
-    console.log(`\nUsing provided Forecast Date: ${forecastDate}`);
-  } else {
-    console.log('\nForecast Date will be auto-calculated after login.');
+  const results = [];
+
+  for (let i = 0; i < projectIds.length; i++) {
+    const projectId = projectIds[i];
+    console.log(`${'='.repeat(50)}`);
+    console.log(`  [${i + 1}/${projectIds.length}] Project: ${projectId}`);
+    console.log(`${'='.repeat(50)}\n`);
+
+    const exitCode = await runProject(projectId, password.trim());
+    results.push({ projectId, passed: exitCode === 0 });
+
+    console.log(`\n  → ${projectId}: ${exitCode === 0 ? 'PASSED ✓' : 'FAILED ✗'}\n`);
   }
 
-  console.log(`\nProject: ${projectId.trim()}`);
-  console.log('\nLaunching Playwright...\n');
+  // Summary
+  console.log(`${'='.repeat(50)}`);
+  console.log('  SUMMARY');
+  console.log(`${'='.repeat(50)}`);
+  for (const { projectId, passed } of results) {
+    console.log(`  ${projectId}: ${passed ? 'PASSED ✓' : 'FAILED ✗'}`);
+  }
+  console.log(`${'='.repeat(50)}\n`);
 
-  const env = {
-    ...process.env,
-    VZ_PASSWORD: password.trim(),
-    FUZE_PROJECT_ID: projectId.trim(),
-    FORECAST_DATE: forecastDate,
-  };
-
-  const child = spawn('npx', ['playwright', 'test', '--grep', 'Shelter BOM', '--headed', '--project=chromium'], {
-    env,
-    stdio: 'inherit',
-    shell: true,
-    cwd: path.join(__dirname, '..'),
-  });
-
-  child.on('exit', (code) => process.exit(code ?? 0));
+  const failCount = results.filter(r => !r.passed).length;
+  process.exit(failCount > 0 ? 1 : 0);
 }
 
 main().catch((err) => { console.error(err); process.exit(1); });

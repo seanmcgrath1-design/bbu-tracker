@@ -20,7 +20,7 @@ test('Shelter BOM', async ({ page }) => {
     throw new Error('Missing project ID — run via: npm run shelter-bom');
   }
 
-  // FORECAST_DATE env is an optional manual override; if empty, auto-calculated after login
+  // FORECAST_DATE env var is an optional manual override
   let TARGET_DATE = process.env.FORECAST_DATE ?? '';
 
   // --- Login ---
@@ -31,42 +31,61 @@ test('Shelter BOM', async ({ page }) => {
 
   // Wait for SSO to complete and redirect back to fuze.verizon.com before navigating
   await page.waitForURL('**/fuze.verizon.com/**', { timeout: 60000 });
-  await page.waitForLoadState('networkidle');
+  await page.waitForLoadState('load');
   await page.goto(`https://fuze.verizon.com/spm/projects.jsp?projectId=${PROJECT_ID}`);
-  await page.waitForLoadState('networkidle');
+  await page.waitForLoadState('load');
 
-  // Auto-calculate forecast date by reading Construction Milestone (F) from the project page
+  // Auto-calculate forecast date from "Construction Commenced → Construction Started (F)"
+  // on the Overview tab. Uses waitForFunction to poll textContent directly, bypassing
+  // aria-hidden and CSS visibility which block getByText from finding the section.
   if (!TARGET_DATE) {
-    const constBtn = page.getByRole('button', { name: /Construction Milestone/ })
-      .filter({ hasNotText: /Regulatory/ })
-      .first();
-    await constBtn.waitFor({ timeout: 15000 });
-    const milestoneText = await constBtn.textContent() ?? '';
+    // Two nested tabpanels must be opened to reach "Construction Started":
+    //   Construction Milestone → Construction Commenced → Construction Started row
+    const constMilestoneBtn = page.getByRole('button', { name: /^Construction Milestone\b/ }).first();
+    await constMilestoneBtn.waitFor({ timeout: 15000 });
+    await constMilestoneBtn.click();
 
-    // Button text format: "Construction Milestone  {STATUS} S {date} F {date} A {date}"
-    const fMatch = milestoneText.match(/\bF\s+(\d{2}\/\d{2}\/\d{4})/);
-    if (!fMatch) {
-      throw new Error(
-        'Construction Start (F) date not found on project page — the milestone may not have a forecast date set.\n' +
-        'Override: $env:FORECAST_DATE="MM/DD/YYYY"; npm run shelter-bom'
-      );
-    }
+    const commencedBtn = page.getByRole('button', { name: /Construction Commenced\b/ }).first();
+    await commencedBtn.waitFor({ timeout: 30000 });
+    await commencedBtn.scrollIntoViewIfNeeded();
+    await commencedBtn.click();
 
-    const [cm, cd, cy] = fMatch[1].split('/').map(Number);
-    const constStart = new Date(cy, cm - 1, cd);
-    const forecast = new Date(constStart.getTime() - 30 * 86400000);
+    // Wait for the Construction Started row to appear, then read the F date.
+    // Anchor on the "Construction Started" label and search downward for the date —
+    // more reliable than traversing upward from the textbox.
+    await page.getByText('Construction Started', { exact: true }).first().waitFor({ timeout: 15000 });
+
+    const constStart = await page.evaluate((): string | null => {
+      const dateRe = /^\d{2}\/\d{2}\/\d{4}$/;
+      for (const el of document.querySelectorAll('*')) {
+        if (el.textContent?.trim() !== 'Construction Started') continue;
+        // Found the label — look for a date in the parent container (the row)
+        const parent = el.parentElement;
+        if (!parent) continue;
+        for (const tb of parent.querySelectorAll('input, [role="textbox"]')) {
+          const v = ((tb as HTMLInputElement).value || tb.textContent || '').trim();
+          if (dateRe.test(v)) return v;
+        }
+      }
+      return null;
+    }) as string | null;
+
+    if (!constStart) throw new Error(
+      'Construction Start (F) date not found in the Construction Commenced section.\n' +
+      'Override: $env:FORECAST_DATE="MM/DD/YYYY"; npm run shelter-bom'
+    );
+
+    const [cm, cd, cy] = constStart.split('/').map(Number);
+    const forecast = new Date(cy, cm - 1, cd);
+    forecast.setDate(forecast.getDate() - 30);
     const today = new Date(); today.setHours(0, 0, 0, 0);
-    if (forecast < today) {
-      throw new Error(
-        `Construction Start is ${fMatch[1]} — forecast date is in the past.\n` +
-        'Override: $env:FORECAST_DATE="MM/DD/YYYY"; npm run shelter-bom'
-      );
-    }
+    if (forecast < today) throw new Error(
+      `Construction Start (F) is ${constStart} — forecast date is in the past.\n` +
+      'Override: $env:FORECAST_DATE="MM/DD/YYYY"; npm run shelter-bom'
+    );
 
-    const mm = String(forecast.getMonth() + 1).padStart(2, '0');
-    const dd = String(forecast.getDate()).padStart(2, '0');
-    TARGET_DATE = `${mm}/${dd}/${forecast.getFullYear()}`;
-    console.log(`  Construction Start (F): ${fMatch[1]}, Forecast Date: ${TARGET_DATE}`);
+    TARGET_DATE = `${String(forecast.getMonth() + 1).padStart(2, '0')}/${String(forecast.getDate()).padStart(2, '0')}/${forecast.getFullYear()}`;
+    console.log(`  Construction Start (F): ${constStart}  →  Forecast Date: ${TARGET_DATE}`);
   }
 
   // Set up PNA interceptor AFTER login so it doesn't interfere with the SSO flow
@@ -98,9 +117,8 @@ test('Shelter BOM', async ({ page }) => {
   const page1Promise = page.waitForEvent('popup');
   await page.getByRole('link', { name: 'Navigate To RFDS BOM' }).click();
   const page1 = await page1Promise;
-  await page1.waitForLoadState('networkidle');
 
-  // Set up PNA interceptor on the popup before any interactions
+  // Set up PNA interceptor BEFORE waiting for load so preflight requests are handled
   await page1.route('**/*', async (route) => {
     if (route.request().method() === 'OPTIONS') {
       await route.fulfill({
@@ -116,6 +134,7 @@ test('Shelter BOM', async ({ page }) => {
       await route.continue();
     }
   });
+  await page1.waitForLoadState('domcontentloaded');
 
   // --- Import Template ---
   await page1.getByRole('button', { name: 'Import Template' }).click();

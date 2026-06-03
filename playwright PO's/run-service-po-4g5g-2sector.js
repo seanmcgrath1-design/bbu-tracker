@@ -14,15 +14,15 @@ function promptPassword(prompt) {
     process.stdin.setEncoding('utf8');
     let password = '';
     process.stdin.on('data', function handler(char) {
-      if (char === '\r' || char === '\n' || char === '') {
+      if (char === '\r' || char === '\n' || char === '\x04') {
         process.stdin.setRawMode(false);
         process.stdin.pause();
         process.stdin.removeListener('data', handler);
         process.stdout.write('\n');
         resolve(password);
-      } else if (char === '') {
+      } else if (char === '\x03') {
         process.exit();
-      } else if (char === '' || char === '\b') {
+      } else if (char === '\x7f' || char === '\x08') {
         if (password.length > 0) {
           password = password.slice(0, -1);
           process.stdout.clearLine(0);
