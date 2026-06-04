@@ -64,14 +64,32 @@ async function main() {
   const password = await promptPassword('Verizon Password: ');
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const input = await new Promise((resolve) =>
-    rl.question('\nFuze Project Numbers (up to 5, comma-separated): ', resolve)
-  );
+
+  console.log('\nFuze Project Numbers (up to 5):');
+  console.log('  Comma-separated on one line, or one per line.');
+  console.log('  Press Enter on a blank line when done.\n');
+
+  const lines = [];
+  await new Promise((resolve) => {
+    const askLine = () => {
+      rl.question('> ', (line) => {
+        const trimmed = line.trim();
+        if (trimmed === '') {
+          resolve();
+        } else {
+          lines.push(trimmed);
+          if (lines.length >= 5) resolve();
+          else askLine();
+        }
+      });
+    };
+    askLine();
+  });
   rl.close();
 
   // Parse: split on commas/spaces, strip blanks, deduplicate, cap at 5
   const projectIds = [...new Set(
-    input.split(/[\s,]+/).map(s => s.trim()).filter(Boolean)
+    lines.join(',').split(/[\s,]+/).map(s => s.trim()).filter(Boolean)
   )].slice(0, 5);
 
   if (projectIds.length === 0) {
