@@ -13,6 +13,7 @@
     "service-po-4g5g-2sector": "node \"playwright PO's/run-service-po-4g5g-2sector.js\"",
     "dwdm-only": "node \"playwright PO's/run-dwdm-only.js\"",
     "1sector-dwdm": "node \"playwright PO's/run-1sector-dwdm.js\"",
+    "1sector-integration-dwdm": "node \"playwright PO's/run-1sector-integration-dwdm.js\"",
     "ocnr-sean": "node \"OCNR/run-ocnr-sean.js\""
   },
   "repository": {
