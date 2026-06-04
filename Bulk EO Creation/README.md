@@ -40,6 +40,9 @@ npx playwright install chromium
 
 That's it — no additional config needed.
 
+> **Also working with the BBU Tracker spreadsheet / Apps Script?**
+> See the root [README.md](../README.md) for clasp setup (install, Google login, and `.clasp.json` config).
+
 ---
 
 ## Running a Script
