@@ -16,10 +16,9 @@ test('OCNR-Sean', async ({ page }) => {
   await page.waitForLoadState('networkidle');
 
   // --- Navigate to app ---
-  await page.getByRole('button', { name: 'Source2Pay - PO' }).click();
-  const page1Promise = page.waitForEvent('popup');
-  await page.getByRole('link', { name: 'ï' }).click();
-  const page1 = await page1Promise;
+  // Open the app directly in a new page — same browser context carries the session.
+  // The original popup approach relied on a font-icon link that is no longer reliable.
+  const page1 = await page.context().newPage();
   await page1.goto('https://fscqlik-tpa.verizon.com/analytics/sense/app/c9ba5d4c-8d56-45c7-ad96-9a1eedeaf7fb/overview');
   await page1.waitForLoadState('networkidle');
 

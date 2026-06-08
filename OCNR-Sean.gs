@@ -64,8 +64,12 @@ function processOCNRFile(file) {
   sheet.setName('Sheet1');
 
   addMonthColumn(spreadsheet, sheet);
-  SpreadsheetApp.flush(); // commit all writes before pivot reads the sheet
-  createPivotTable(spreadsheet, sheet);
+  SpreadsheetApp.flush();
+
+  // Re-open the spreadsheet so the pivot reads a fresh view after the Sheets API writes
+  var freshSS = SpreadsheetApp.openById(copied.id);
+  var freshSheet = freshSS.getSheetByName('Sheet1');
+  createPivotTable(freshSS, freshSheet);
 
   Logger.log('OCNR processed → ' + gsName);
 }
@@ -112,12 +116,15 @@ function addMonthColumn(spreadsheet, sheet) {
 // ─── Pivot table ──────────────────────────────────────────────────────────────
 
 function createPivotTable(spreadsheet, sheet) {
+  Logger.log('createPivotTable: sheet=' + sheet.getName() + ' lastCol=' + sheet.getLastColumn() + ' lastRow=' + sheet.getLastRow());
+
   var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
 
   var supplierCol = headers.indexOf('Supplier Name') + 1;
   var monthCol    = headers.indexOf('Month') + 1;
   var valueCol    = headers.indexOf('Total Value not received(W/O Taxes)') + 1;
-  var itemCatCol  = headers.indexOf('Item Category Descr') + 1;
+
+  Logger.log('Cols: supplier=' + supplierCol + ' month=' + monthCol + ' value=' + valueCol);
 
   var missing = [];
   if (!supplierCol) missing.push('Supplier Name');
@@ -145,6 +152,8 @@ function createPivotTable(spreadsheet, sheet) {
 
   // Values: Sum of Total Value not received(W/O Taxes)
   pivot.addPivotValue(valueCol, SpreadsheetApp.PivotTableSummarizeFunction.SUM);
+
+  Logger.log('Pivot tab created successfully');
 }
 
 // ─── Manual test ─────────────────────────────────────────────────────────────
