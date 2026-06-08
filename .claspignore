@@ -3,3 +3,7 @@
 
 !*.gs
 !appsscript.json
+
+# Not present in the live (14-MG) bound project — don't add them on push
+BOM Helper.gs
+OCNR-Sean.gs

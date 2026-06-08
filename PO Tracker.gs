@@ -180,19 +180,11 @@ function checkPOConfirmationsAndDraft() {
 
     var poRef = rowSubj.replace("Unmatched - ", "").trim();
     var rtnEO = String(trackingData[i][COL_RTN]).trim();
-    var fixedThreads = GmailApp.search('subject:"Ready for" "' + poRef + '"');
+    var fixedThread = findOriginalReadyThread(poRef, rtnEO);
 
-    if (fixedThreads.length === 0 && poRef.indexOf('&') !== -1) {
-      var fp = poRef.split('&')[0].trim();
-      fixedThreads = GmailApp.search('subject:"Ready for" "' + fp + '"');
-    }
-    if (fixedThreads.length === 0) {
-      fixedThreads = GmailApp.search('subject:"Ready for" "' + rtnEO + '"');
-    }
-
-    if (fixedThreads.length > 0) {
-      var fixedSubj = fixedThreads[0].getFirstMessageSubject();
-      var fixedBody = fixedThreads[0].getMessages()[0].getPlainBody();
+    if (fixedThread) {
+      var fixedSubj = fixedThread.getFirstMessageSubject();
+      var fixedBody = fixedThread.getMessages()[0].getPlainBody();
       var fixedSites = "";
       var fixedMatch = fixedBody.match(/Work for\s+([^\.\n\r<]+)/i);
       if (fixedMatch) fixedSites = fixedMatch[1].replace(/\*/g, '').trim();
@@ -292,6 +284,94 @@ function backfillPoTracking() {
   checkPOConfirmationsAndDraft();
 }
 
+// Finds the best original "Ready for Install" thread for a PO.
+// Prefers the single-site email and never selects a multi-site "harvest" email,
+// so per-site POs aren't bundled onto a shared harvest subject.
+function findOriginalReadyThread(poRef, rtnEO) {
+  var candidates = GmailApp.search('subject:"Ready for" "' + poRef + '"');
+
+  // Site names containing "&" confuse Gmail search; retry on the first part.
+  if (candidates.length === 0 && poRef.indexOf('&') !== -1) {
+    var firstPart = poRef.split('&')[0].trim();
+    candidates = GmailApp.search('subject:"Ready for" "' + firstPart + '"');
+  }
+  if (candidates.length === 0 && rtnEO) {
+    candidates = GmailApp.search('subject:"Ready for" "' + rtnEO + '"');
+  }
+
+  return pickBestReadyThread(candidates, poRef);
+}
+
+// Chooses the most specific per-site thread from search results.
+// 1. Drops multi-site "harvest" emails entirely (never a valid reply target).
+// 2. Scores the rest, preferring a subject that names this site and/or is an
+//    "Install / Integration" email. Falls back to first-by-date (Gmail order).
+function pickBestReadyThread(threads, poRef) {
+  var filtered = threads.filter(function(t) {
+    return t.getFirstMessageSubject().toLowerCase().indexOf('harvest') === -1;
+  });
+  if (filtered.length === 0) return null;
+
+  var siteRef = String(poRef).toLowerCase().trim();
+  var best = null, bestScore = -1;
+  filtered.forEach(function(t) {
+    var subj = t.getFirstMessageSubject().toLowerCase();
+    var score = 0;
+    if (siteRef && subj.indexOf(siteRef) !== -1) score += 2;
+    if (subj.indexOf('install / integration') !== -1) score += 1;
+    if (score > bestScore) { bestScore = score; best = t; }
+  });
+  return best;
+}
+
+// One-off cleanup: re-points any rows mistakenly grouped onto a multi-site
+// "harvest" digest email back to their dedicated per-site "Ready for Install"
+// thread, using the same selection logic as the live matcher. Resets status to
+// "Confirmed" so the next PO check drafts a correct per-site reply.
+// Run this from the Apps Script editor, then run Check PO Confirmations.
+function fixHarvestGroupedRows() {
+  // Fallback to openById so this can be run directly from the Apps Script editor
+  // (no active spreadsheet context), not just from the BBU Tools menu.
+  var ss = SpreadsheetApp.getActiveSpreadsheet() ||
+           SpreadsheetApp.openById('1Ada_FMW6YmE25puTyjYA4QYWUxmlFLpTptEdgviUif0');
+  var sheet = ensureTrackingSheet(ss);
+  var data = sheet.getDataRange().getValues();
+
+  var COL_ALL_SITES = 2, COL_SITE = 3, COL_RTN = 4, COL_SUBJECT = 5, COL_STATUS = 9;
+  var changes = [];
+
+  for (var i = 1; i < data.length; i++) {
+    var subj = String(data[i][COL_SUBJECT]).trim();
+    if (subj.toLowerCase().indexOf('harvest') === -1) continue;
+
+    var site  = String(data[i][COL_SITE]).trim();
+    var rtnEO = String(data[i][COL_RTN]).trim();
+    var thread = findOriginalReadyThread(site, rtnEO);
+
+    var newSubj, newSites = null;
+    if (thread) {
+      newSubj = thread.getFirstMessageSubject();
+      var body = thread.getMessages()[0].getPlainBody();
+      var m = body.match(/Work for\s+([^\.\n\r<]+)/i);
+      if (m) newSites = m[1].replace(/\*/g, '').trim();
+    } else {
+      newSubj = "Unmatched - " + site;
+    }
+
+    sheet.getRange(i + 1, COL_SUBJECT + 1).setValue(newSubj);
+    if (newSites) sheet.getRange(i + 1, COL_ALL_SITES + 1).setValue(newSites);
+    sheet.getRange(i + 1, COL_STATUS + 1).setValue("Confirmed");
+    changes.push(site + "  ->  " + newSubj);
+  }
+
+  var msg = changes.length
+    ? "Re-pointed " + changes.length + " row(s):\n\n" + changes.join("\n") +
+      "\n\nNow run 'Check PO Confirmations and Draft Replies' to create the per-site drafts."
+    : "No rows with a 'harvest' subject found.";
+  console.log(msg);
+  try { SpreadsheetApp.getUi().alert("Fix Harvest Rows", msg, SpreadsheetApp.getUi().ButtonSet.OK); } catch(e) {}
+}
+
 // Shared helper: takes a list of unmatched POs, finds original emails (Sean or Enis),
 // groups by subject, builds All Active Sites, and returns rows ready to append.
 function buildNewTrackingRows(unmatchedPOs) {
@@ -302,24 +382,15 @@ function buildNewTrackingRows(unmatchedPOs) {
     var emailSubject = "";
     var emailBodySites = "";
 
-    // Search all mail (not just sent) so Enis's emails are found too.
-    // Fallback searches handle site names containing "&" which Gmail misinterprets as a search operator.
-    var origThreads = GmailApp.search('subject:"Ready for" "' + po.poRef + '"');
+    // Search all mail (not just sent) so Enis's emails are found too. Prefers the
+    // single-site thread and never matches a multi-site "harvest" email.
+    var origThread = findOriginalReadyThread(po.poRef, po.rtnEO);
 
-    if (origThreads.length === 0 && po.poRef.indexOf('&') !== -1) {
-      var firstPart = po.poRef.split('&')[0].trim();
-      origThreads = GmailApp.search('subject:"Ready for" "' + firstPart + '"');
-    }
-
-    if (origThreads.length === 0) {
-      origThreads = GmailApp.search('subject:"Ready for" "' + po.rtnEO + '"');
-    }
-
-    if (origThreads.length > 0) {
-      emailSubject = origThreads[0].getFirstMessageSubject();
+    if (origThread) {
+      emailSubject = origThread.getFirstMessageSubject();
       if (emailSubject.indexOf("Small Cell Mod Ready for Network Assurance:") !== -1) return;
       if (emailSubject.indexOf("48 Hour Review Document") !== -1) return;
-      var bodyText = origThreads[0].getMessages()[0].getPlainBody();
+      var bodyText = origThread.getMessages()[0].getPlainBody();
       var workForMatch = bodyText.match(/Work for\s+([^\.\n\r<]+)/i);
       if (workForMatch) emailBodySites = workForMatch[1].replace(/\*/g, '').trim();
     } else {
