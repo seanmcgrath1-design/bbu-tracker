@@ -3,6 +3,7 @@ desktop.ini
 .clasp.json.template
 .claude/
 .tmp.driveupload/
+.handoff.env
 
 # Playwright
 node_modules/

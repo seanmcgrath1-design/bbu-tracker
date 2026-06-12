@@ -1,7 +1,47 @@
 // ==========================================
+// CQ ATTACHMENT CONFIG / HELPERS
+// ==========================================
+// Drive folder ID of bbu-tracker/CQ. Paste it from the folder's URL
+// (drive.google.com/drive/folders/<THIS_PART>). Leave '' to auto-locate by name.
+var CQ_FOLDER_ID = '1CBZU-IfuwKs6PvXA1o1J5ezbMhcCb63W';
+
+// Find the CQ file for a Fuze ID among a snapshot of folder files. The Playwright saves
+// "CQ_<FuzeID>_<SiteName>.xlsx" (or "CQ_<FuzeID>.xlsx"); match on the Fuze ID prefix. Returns File|null.
+function findCqFile_(fuzeId, cqFiles) {
+  var prefix = "CQ_" + String(fuzeId).trim();
+  for (var k = 0; k < cqFiles.length; k++) {
+    var nm = cqFiles[k].getName();
+    if (nm === prefix + ".xlsx" || nm.indexOf(prefix + "_") === 0) return cqFiles[k];
+  }
+  return null;
+}
+
+// Resolve the bbu-tracker/CQ Drive folder. Returns the Folder, or null if not found.
+function getCqFolder_() {
+  try {
+    if (CQ_FOLDER_ID) return DriveApp.getFolderById(CQ_FOLDER_ID);
+
+    // Fallback: locate folder "bbu-tracker" -> subfolder "CQ".
+    var parents = DriveApp.getFoldersByName('bbu-tracker');
+    while (parents.hasNext()) {
+      var sub = parents.next().getFoldersByName('CQ');
+      if (sub.hasNext()) return sub.next();
+    }
+    // Last resort: any folder literally named "CQ".
+    var direct = DriveApp.getFoldersByName('CQ');
+    if (direct.hasNext()) return direct.next();
+  } catch (e) {
+    console.error('getCqFolder_ failed: ' + e);
+  }
+  return null;
+}
+
+// ==========================================
 // AUTOMATED DAILY HANDOFF SCRIPT
 // ==========================================
-function generateHandoffDrafts() {
+// dryRun=true: compute & return the ready sites only (no drafts, no sent-date stamping, no UI) —
+// used by the Handoff API web app. Falsy (the BBU Tools 4b menu): unchanged behavior (creates drafts).
+function generateHandoffDrafts(dryRun) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName("Daily Data Dump");
   var siteDetailSheet = ss.getSheetByName("Site Detail");
@@ -64,7 +104,7 @@ function generateHandoffDrafts() {
     }
   }
 
-  // 2. Group by BBU (E0 filter)
+  // 2. Group by BBU (real E0 EOs grouped together; "Bulk ####" placeholders stand alone)
   var bbuGroups = {};
   rows.forEach(function(row) {
     var bbuVal = String(row[colBBU] || "").trim();
@@ -76,12 +116,32 @@ function generateHandoffDrafts() {
 
       if (!bbuGroups[cleanBbu]) bbuGroups[cleanBbu] = [];
       bbuGroups[cleanBbu].push(row);
+    } else if (isBulkPlaceholder_(bbuVal)) {
+      // Bulk-order placeholder (e.g. "Bulk 6648") — no real EO yet. Let it pass through as
+      // ready, but key by Fuze ID so each bulk site is its own draft (never grouped together).
+      var fzBulk = String(row[colFuzeId]).trim();
+      if (fzBulk) {
+        var bulkKey = "BULK::" + fzBulk;
+        if (!bbuGroups[bulkKey]) bbuGroups[bulkKey] = [];
+        bbuGroups[bulkKey].push(row);
+      }
     }
   });
   
   var draftsCreated = 0;
   var today = new Date();
-  var currentYearStr = String(today.getFullYear()); 
+  var currentYearStr = String(today.getFullYear());
+
+  // Resolve the Drive CQ folder once and snapshot its file list (null = attachments skipped).
+  var cqFolder = getCqFolder_();
+  if (!cqFolder) console.warn("CQ folder not found — drafts will be created without CQ attachments.");
+  var cqFiles = [];
+  if (cqFolder) {
+    var cqIter = cqFolder.getFiles();
+    while (cqIter.hasNext()) cqFiles.push(cqIter.next());
+  }
+  var allMissingCqs = []; // Sites across all drafts whose CQ file was not found.
+  var readySites = [];    // {fuze, site} for every ready node (returned in dryRun mode).
 
   function hasData(val) { return val !== "" && val !== null && val !== undefined && val !== "Data Missing"; }
   function getCell(row, colIndex) {
@@ -138,9 +198,29 @@ function generateHandoffDrafts() {
 
       var activeNames = processedGroup.filter(p => p.ready).map(p => String(p.data[colNodeName])).join(" & ");
       var subject = "[ACTION REQUIRED] Ready for Install / Integration - " + activeNames;
-      
+
+      // Build CQ attachments for each ready site (matched by Fuze ID prefix via findCqFile_),
+      // and record the ready sites (used by the dryRun / web-app path).
+      var attachments = [];
+      var missingCqs = [];
+      processedGroup.forEach(function(p) {
+        if (!p.ready) return;
+        var siteName = String(p.data[colNodeName]).trim();
+        readySites.push({ fuze: String(p.fuzeId).trim(), site: siteName });
+        var label = siteName + " (" + p.fuzeId + ")";
+        var f = findCqFile_(p.fuzeId, cqFiles);
+        if (f) { attachments.push(f.getBlob()); }
+        else { missingCqs.push(label); allMissingCqs.push(label); }
+      });
+
       var htmlBody = "<div style='font-family: Arial, sans-serif;'>";
-      htmlBody += "<div style='background-color: #fff3cd; color: #856404; padding: 10px; border: 1px solid #ffeeba; margin-bottom: 15px;'><strong>🛑 ACTION REQUIRED:</strong> Attach CQs & Paste Rack Layout.</div>";
+      if (missingCqs.length === 0 && attachments.length > 0) {
+        htmlBody += "<div style='background-color: #d9ead3; color: #274e13; padding: 10px; border: 1px solid #b6d7a8; margin-bottom: 15px;'><strong>✅ CQs attached.</strong> Paste Rack Layout below.</div>";
+      } else {
+        htmlBody += "<div style='background-color: #fff3cd; color: #856404; padding: 10px; border: 1px solid #ffeeba; margin-bottom: 15px;'><strong>🛑 ACTION REQUIRED:</strong> Paste Rack Layout" + (attachments.length > 0 ? " (CQs attached where found)" : " & attach CQs") + ".";
+        if (missingCqs.length > 0) htmlBody += "<br>Missing CQ for: <strong>" + missingCqs.join(", ") + "</strong> — run <em>CQ Retrieval</em> for these, or attach manually.";
+        htmlBody += "</div>";
+      }
       htmlBody += "<p>Work for <strong>" + activeNames + "</strong>.<br><span style='color: #274e13; font-size: 13px;'><em>*Green = Previously Completed Reference Sites. <br>*Grey = Outside Current Build Year.</em></span></p>";
       
       htmlBody += "<table cellpadding='5' cellspacing='0' style='border-collapse: collapse; font-size: 14px; border: 1px solid black;'>";
@@ -181,7 +261,9 @@ function generateHandoffDrafts() {
           var v = getCell(r, col5GgNB); var t = (techMap[String(getCell(r, colFuzeId)).trim()] || "").toUpperCase();
           return (v === "Data Missing" && t === "4G") ? "N/A" : v;
       });
-      htmlBody += "<tr><td style='background-color: #4f81bd; color: #ffffff; font-weight: bold; border: 1px solid black;'>BBU EO #</td><td colspan='"+processedGroup.length+"' style='text-align:center; border: 1px solid black;'><strong>"+bbu+"</strong></td></tr>";
+      // For bulk groups the loop key is "BULK::<fuze>" — show the real BBU value ("Bulk 6648") instead.
+      var displayBbu = (bbu.indexOf("BULK::") === 0) ? String(processedGroup[0].data[colBBU]).trim() : bbu;
+      htmlBody += "<tr><td style='background-color: #4f81bd; color: #ffffff; font-weight: bold; border: 1px solid black;'>BBU EO #</td><td colspan='"+processedGroup.length+"' style='text-align:center; border: 1px solid black;'><strong>"+displayBbu+"</strong></td></tr>";
       htmlBody += buildRow("DWDM EO", r => hasData(r[colDWDM]) ? r[colDWDM] : "Use Stock");
       htmlBody += buildRow("Installation PO", r => hasData(r[colPO]) ? r[colPO] : "PO Requested");
       htmlBody += buildRow("CQ Verified", r => r[colCQ] instanceof Date ? formatDate(r[colCQ]) : "CQ Pending");
@@ -197,26 +279,33 @@ function generateHandoffDrafts() {
 
       htmlBody += "</table><br><p><strong>[PASTE RACK LAYOUT SCREENSHOT HERE]</strong></p></div>";
 
-      GmailApp.createDraft("Ronan.Tito@parsons.com, ron.doering@ericsson.com, frantz.khan@ericsson.com, narendra.singh.bist.bist@ericsson.com, carlos.javier.rios.castrejon@ericsson.com", subject, '', { 
-        htmlBody: htmlBody, 
-        cc: "enis.orahovac@verizonwireless.com, matt.dubowski@verizonwireless.com, sean.mcgrath1@verizonwireless.com" 
-      });
+      // dryRun (web-app "ready" path) only needs the readySites list — skip side effects.
+      if (!dryRun) {
+        GmailApp.createDraft("Ronan.Tito@parsons.com, ron.doering@ericsson.com, frantz.khan@ericsson.com, narendra.singh.bist.bist@ericsson.com, carlos.javier.rios.castrejon@ericsson.com", subject, '', {
+          htmlBody: htmlBody,
+          cc: "enis.orahovac@verizonwireless.com, matt.dubowski@verizonwireless.com, sean.mcgrath1@verizonwireless.com",
+          attachments: attachments
+        });
 
-      // Site Detail Update Memory
-      processedGroup.forEach(function(p) {
-        if (p.ready) {
-          for (var j = 1; j < sdData.length; j++) {
-            if (String(sdData[j][colSDFuze]).trim() === p.fuzeId) {
-              siteDetailSheet.getRange(j + 1, colSDSent + 1).setValue(today);
-              break;
+        // Site Detail Update Memory
+        processedGroup.forEach(function(p) {
+          if (p.ready) {
+            for (var j = 1; j < sdData.length; j++) {
+              if (String(sdData[j][colSDFuze]).trim() === p.fuzeId) {
+                siteDetailSheet.getRange(j + 1, colSDSent + 1).setValue(today);
+                break;
+              }
             }
           }
-        }
-      });
-      draftsCreated++;
+        });
+        draftsCreated++;
+      }
     }
   }
   
+  // dryRun (web-app "ready" path): return the ready sites only, no logging/UI.
+  if (dryRun) return { ready: readySites };
+
   // Logging for trigger verification
   console.log("Handoff automation finished. Drafts created: " + draftsCreated);
 
@@ -226,9 +315,16 @@ function generateHandoffDrafts() {
     if (draftsCreated === 0) {
       ui.alert("Handoff Status", "No Sites Ready for Handoff.", ui.ButtonSet.OK);
     } else {
-      ui.alert("Handoff Status", "Success! " + draftsCreated + " handoff draft(s) created.", ui.ButtonSet.OK);
+      var msg = "Success! " + draftsCreated + " handoff draft(s) created.";
+      if (allMissingCqs.length > 0) {
+        msg += "\n\nNo CQ found for " + allMissingCqs.length + " site(s):\n" + allMissingCqs.join(", ") +
+               "\n\nRun 'CQ Retrieval' for these (or attach manually) before sending.";
+      }
+      ui.alert("Handoff Status", msg, ui.ButtonSet.OK);
     }
   } catch (e) {
     // Safely catches the error and does nothing if the script is running automatically
   }
+
+  return { created: draftsCreated, missing: allMissingCqs };
 }

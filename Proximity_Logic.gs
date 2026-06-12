@@ -88,7 +88,7 @@ function emailWeeklyPortReport() {
     let sectorVal = (mSecCol !== -1) ? String(mainData[j][mSecCol]).trim() : "";
     
     let is5GOnly = tech.includes("5G") && !tech.includes("4G"); 
-    let isPrePaired = bbuVal !== ""; 
+    let isPrePaired = bbuVal !== "" && !isBulkPlaceholder_(bbuVal);
     let isConfirmed = (sectorVal !== "");
     let clusterId = isPrePaired ? "BBU_" + bbuVal : (formula.match(/HYPERLINK\("([^"]+)"/i) ? "URL_" + formula.match(/HYPERLINK\("([^"]+)"/i)[1] : "STANDALONE_" + j);
 
@@ -181,6 +181,14 @@ const PALETTE_COLORS = [
   '#FFE4B5', '#FFDAB9', '#DDA0DD', '#B0E0E6', '#FFC0CB', '#F5DEB3', '#00FF00', '#00FFFF', '#FFFF00', '#FF7F50',
   '#00FA9A', '#87CEEB', '#FF69B4', '#BA55D3', '#32CD32', '#F08080', '#FA8072', '#40E0D0', '#EE82EE', '#FFD700'
 ];
+
+// A "Bulk ####" BBU value (e.g. "Bulk 6648") is a placeholder for a not-yet-assigned BBU on
+// sites awaiting a bulk order. These must NEVER be grouped: each is written as its own
+// standalone single-node cluster, and they are excluded from real-BBU pre-pairing and from
+// the open-ports / port-report BBU grouping.
+function isBulkPlaceholder_(bbuVal) {
+  return /^bulk/i.test(String(bbuVal || "").trim());
+}
 
 function pairSectorsByMapLinks() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -301,7 +309,10 @@ function pairSectorsByMapLinks() {
 
   let bbuCounter = 0;
   for (let h in hubGroups) {
-    let sites = hubGroups[h], pre = sites.filter(s => s.bbu !== null), un = sites.filter(s => s.bbu === null);
+    let sites = hubGroups[h];
+    let bulk = sites.filter(s => s.bbu !== null && isBulkPlaceholder_(s.bbu));
+    let pre = sites.filter(s => s.bbu !== null && !isBulkPlaceholder_(s.bbu));
+    let un = sites.filter(s => s.bbu === null);
     let bbuMap = {};
     pre.forEach(s => { if (!bbuMap[s.bbu]) bbuMap[s.bbu] = []; bbuMap[s.bbu].push(s); });
 
@@ -337,6 +348,9 @@ function pairSectorsByMapLinks() {
       createClusters(un.filter(s => s.is5G), 6).forEach(c => writeCluster(c, bbuCounter++, mainSheet, mOutCol, mDistCol, PALETTE_COLORS));
       createClusters(un.filter(s => !s.is5G), 3).forEach(c => writeCluster(c, bbuCounter++, mainSheet, mOutCol, mDistCol, PALETTE_COLORS));
     }
+
+    // Bulk placeholders (e.g. "Bulk 6648") are never grouped — write each as its own standalone cluster.
+    bulk.forEach(s => writeCluster([s], bbuCounter++, mainSheet, mOutCol, mDistCol, PALETTE_COLORS));
   }
 
   function writeCluster(chunk, cIdx, sh, outCol, distCol, colArr) {
@@ -553,7 +567,8 @@ function pairSectorsForSingleHub() {
     return res;
   }
 
-  let pre = targetNodes.filter(s => s.bbu !== null);
+  let bulk = targetNodes.filter(s => s.bbu !== null && isBulkPlaceholder_(s.bbu));
+  let pre = targetNodes.filter(s => s.bbu !== null && !isBulkPlaceholder_(s.bbu));
   let un = targetNodes.filter(s => s.bbu === null);
   let bbuMap = {};
   pre.forEach(s => { if (!bbuMap[s.bbu]) bbuMap[s.bbu] = []; bbuMap[s.bbu].push(s); });
@@ -590,6 +605,9 @@ function pairSectorsForSingleHub() {
     createClusters(un.filter(s => s.is5G), 6).forEach(c => writeCluster(c, bbuCounter++, mainSheet, mOutCol, mDistCol, PALETTE_COLORS));
     createClusters(un.filter(s => !s.is5G), 3).forEach(c => writeCluster(c, bbuCounter++, mainSheet, mOutCol, mDistCol, PALETTE_COLORS));
   }
+
+  // Bulk placeholders (e.g. "Bulk 6648") are never grouped — write each as its own standalone cluster.
+  bulk.forEach(s => writeCluster([s], bbuCounter++, mainSheet, mOutCol, mDistCol, PALETTE_COLORS));
 
   function writeCluster(chunk, cIdx, sh, outCol, distCol, colArr) {
     let url = ""; 
@@ -748,7 +766,7 @@ function exportToGoogleEarth() {
     let formula = String(outputFormulas[j][0]);
     let bgColor = bgColors[j][0];
     
-    let isPrePaired = bbuVal !== "";
+    let isPrePaired = bbuVal !== "" && !isBulkPlaceholder_(bbuVal);
     let urlMatch = formula.match(/HYPERLINK\("([^"]+)"/i);
     let clusterId = isPrePaired ? "BBU_" + bbuVal : (urlMatch ? "URL_" + urlMatch[1] : "STANDALONE_" + j);
 
@@ -875,7 +893,7 @@ function calculateOpenPorts() {
       let sectorVal = (mSecCol !== -1) ? String(mainData[j][mSecCol]).trim() : "";
       
       let is5GOnly = tech.includes("5G") && !tech.includes("4G"); 
-      let isPrePaired = bbuVal !== ""; 
+      let isPrePaired = bbuVal !== "" && !isBulkPlaceholder_(bbuVal);
       let isConfirmed = (sectorVal !== "");
       
       let clusterId = "";
@@ -983,7 +1001,7 @@ function generateFullPortReport() {
     let sectorVal = (mSecCol !== -1) ? String(mainData[j][mSecCol]).trim() : "";
     
     let is5GOnly = tech.includes("5G") && !tech.includes("4G"); 
-    let isPrePaired = bbuVal !== ""; 
+    let isPrePaired = bbuVal !== "" && !isBulkPlaceholder_(bbuVal);
     let isConfirmed = (sectorVal !== "");
     
     let clusterId = "";

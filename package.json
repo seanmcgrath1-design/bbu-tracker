@@ -14,7 +14,9 @@
     "dwdm-only": "node \"playwright PO's/run-dwdm-only.js\"",
     "1sector-dwdm": "node \"playwright PO's/run-1sector-dwdm.js\"",
     "1sector-integration-dwdm": "node \"playwright PO's/run-1sector-integration-dwdm.js\"",
-    "ocnr-sean": "node \"OCNR/run-ocnr-sean.js\""
+    "ocnr-sean": "node \"OCNR/run-ocnr-sean.js\"",
+    "cq-retrieval": "node \"playwright CQ/run-cq-retrieval.js\"",
+    "handoff": "node \"playwright CQ/run-handoff-auto.js\""
   },
   "repository": {
     "type": "git",
